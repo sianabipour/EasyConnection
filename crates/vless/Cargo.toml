@@ -1,0 +1,17 @@
+[package]
+name = "rt-vless"
+description = "VLESS TCP client (encryption=none)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+rt-config = { workspace = true }
+rt-socks = { workspace = true }
+rt-tls = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "rt-socks"
+description = "Local SOCKS4/4a/5 and HTTP CONNECT proxy listeners"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

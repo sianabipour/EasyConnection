@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  desktop-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Ubuntu build packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file pkg-config \
+            libssl-dev openssl \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf \
+            iproute2 nftables dpkg-dev python3
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build desktop .deb
+        env:
+          VERSION: 0.1.0.${{ github.run_number }}
+        run: |
+          chmod +x scripts/*.sh scripts/gen-icons.py packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/deb/cleanup-network.sh
+          ./scripts/build-desktop-deb.sh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0.${{ github.run_number }}
+          name: Easy Connection 0.1.0 (build ${{ github.run_number }})
+          generate_release_notes: true
+          files: packaging/out/*.deb
+          fail_on_unmatched_files: true
+          body: |
+            ## Install on Ubuntu
+
+            Download `easy-connection_*.deb` below, then:
+
+            ```bash
+            sudo apt install ./easy-connection_*.deb
+            ```
+
+            Open **Easy Connection** from the app menu (Activities search).
+            The `easy-helper` background service starts automatically for VPN / full-tunnel mode.
+
+            CLI: `easy --help`

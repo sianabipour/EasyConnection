@@ -1,0 +1,23 @@
+id: app.easyconnection.linux
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: easy-desktop
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-config/easy:create
+  - --filesystem=/run/easy:ro
+modules:
+  - name: easy-desktop
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 easy-desktop /app/bin/easy-desktop
+      - install -Dm755 easy /app/bin/easy
+    sources:
+      - type: file
+        path: ../../target/release/easy-desktop
+      - type: file
+        path: ../../target/release/easy

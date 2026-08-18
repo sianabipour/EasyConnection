@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+# Drop TUN/nft/routes while the helper binary is still on disk.
+if [ -x /usr/lib/easy/cleanup-network.sh ]; then
+  /usr/lib/easy/cleanup-network.sh || true
+elif [ -x /usr/lib/easy/easy-helper ]; then
+  /usr/lib/easy/easy-helper --cleanup-and-exit || true
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now easy-helper.service || true
+fi
+exit 0

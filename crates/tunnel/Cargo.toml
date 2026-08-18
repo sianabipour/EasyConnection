@@ -1,0 +1,37 @@
+[package]
+name = "rt-tunnel"
+description = "Tunnel engine and connection state machine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+rt-config = { workspace = true }
+rt-dns = { workspace = true }
+rt-secrets = { workspace = true }
+rt-ssh = { workspace = true }
+rt-socks = { workspace = true }
+rt-tun = { workspace = true }
+rt-udpgw = { workspace = true }
+rt-tls = { workspace = true }
+rt-shadowsocks = { workspace = true }
+rt-vless = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+ipnet = { workspace = true }
+libc = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+rt-config = { workspace = true }

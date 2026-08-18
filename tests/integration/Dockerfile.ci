@@ -1,0 +1,15 @@
+# Ubuntu 26.04 image for compile + unit tests (no privileged TUN).
+FROM ubuntu:26.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl git pkg-config \
+        libssl-dev openssl iproute2 nftables python3 \
+        nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /src
+CMD ["./scripts/check.sh"]

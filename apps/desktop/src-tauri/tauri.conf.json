@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Easy Connection",
+  "version": "0.1.0",
+  "identifier": "app.easyconnection.linux",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Easy Connection",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 880,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/henry.w@example.net",
+      "icons/icon.png"
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["nftables", "iproute2", "openssl", "libwebkit2gtk-4.1-0"],
+        "files": {
+          "/usr/lib/easy/easy-helper": "../../../target/release/easy-helper",
+          "/usr/lib/easy/cleanup-network.sh": "../../../packaging/deb/cleanup-network.sh",
+          "/usr/lib/systemd/system/easy-helper.service": "../../../packaging/deb/easy-helper.service",
+          "/usr/bin/easy": "../../../target/release/easy"
+        },
+        "desktopTemplate": "../../../packaging/deb/desktop.hbs",
+        "preRemoveScript": "../../../packaging/deb/prerm",
+        "postRemoveScript": "../../../packaging/deb/postrm",
+        "postInstallScript": "../../../packaging/deb/postinst"
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+easy-connection (0.1.0) UNRELEASED; urgency=medium
+
+  * Desktop package: GUI, CLI, app-menu entry, and background easy-helper.
+
+ -- Easy Connection Contributors <easy@localhost>  Mon, 17 Aug 2026 11:00:00 +0000

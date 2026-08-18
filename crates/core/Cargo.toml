@@ -1,0 +1,23 @@
+[package]
+name = "rt-core"
+description = "Application controller — single source of truth for UI/IPC"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+rt-config = { workspace = true }
+rt-secrets = { workspace = true }
+rt-tunnel = { workspace = true }
+rt-diagnostics = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+directories = { workspace = true }

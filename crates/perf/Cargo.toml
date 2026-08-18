@@ -1,0 +1,19 @@
+[package]
+name = "easy-bench"
+description = "Easy Connection micro-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "easy-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+rt-config = { workspace = true }
+rt-nftables = { workspace = true }
+rt-shadowsocks = { workspace = true }

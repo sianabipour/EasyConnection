@@ -1,0 +1,15 @@
+[package]
+name = "rt-diagnostics"
+description = "Easy Connection diagnostics (leak, TCP probe, traceroute)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rt-tun = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

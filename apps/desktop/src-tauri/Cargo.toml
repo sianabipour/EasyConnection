@@ -1,0 +1,33 @@
+[package]
+name = "easy-desktop"
+description = "Easy Connection Linux desktop (Tauri 2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "easy_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-clipboard-manager = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+rt-core = { workspace = true }
+rt-config = { workspace = true }
+rt-tunnel = { workspace = true }
+rt-tun = { workspace = true }
+rt-diagnostics = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,12 @@
+Package: easy-connection
+Version: 0.1.0
+Section: net
+Priority: optional
+Architecture: amd64
+Installed-Size: 0
+Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.39)
+Recommends: systemd-resolved
+Maintainer: Easy Connection Contributors <easy@localhost>
+Description: Easy Connection CLI and privileged helper
+ Headless package: the "easy" command and easy-helper systemd service.
+ For Ubuntu Desktop, prefer the full package from scripts/build-desktop-deb.sh.

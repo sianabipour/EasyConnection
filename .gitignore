@@ -1,0 +1,27 @@
+/target
+**/target
+/apps/desktop/node_modules
+/apps/desktop/dist
+/apps/desktop/src-tauri/target
+
+# Packaged binaries from scripts/build-*.sh (published via GitHub Releases)
+/packaging/out
+*.deb
+*.AppImage
+
+# Editor / agent local state
+.cursor/
+.idea
+.vscode
+.DS_Store
+*.swp
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Flatpak local build trees
+/packaging/flatpak/build-dir
+/.flatpak-builder

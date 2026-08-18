@@ -1,0 +1,22 @@
+[package]
+name = "rt-shadowsocks"
+description = "Shadowsocks AEAD TCP client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+aes-gcm = { workspace = true }
+async-trait = { workspace = true }
+hkdf = { workspace = true }
+md5 = { workspace = true }
+rand = { workspace = true }
+rt-config = { workspace = true }
+rt-secrets = { workspace = true }
+rt-socks = { workspace = true }
+rt-tls = { workspace = true }
+sha1 = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

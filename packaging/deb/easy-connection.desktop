@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Easy Connection
+GenericName=Tunneling client
+Comment=SSH, Shadowsocks, and VLESS tunnels with local proxy and optional VPN mode
+Exec=easy-desktop
+Icon=easy-connection
+Terminal=false
+Categories=Network;Security;
+Keywords=VPN;Proxy;SSH;SOCKS;Tunnel;Shadowsocks;VLESS;
+StartupNotify=true
+StartupWMClass=easy-desktop
+DBusActivatable=false

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.easyconnection.linux</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>Easy Connection</name>
+  <summary>SSH, Shadowsocks, and VLESS tunneling client</summary>
+  <description>
+    <p>
+      Easy Connection is a native Ubuntu client for SSH, Shadowsocks, and VLESS
+      tunnels. It provides local SOCKS and HTTP proxies and optional system-wide
+      TCP routing through a privileged helper that runs in the background.
+    </p>
+  </description>
+  <launchable type="desktop-id">easy-connection.desktop</launchable>
+  <provides>
+    <binary>easy-desktop</binary>
+    <binary>easy</binary>
+  </provides>
+  <categories>
+    <category>Network</category>
+    <category>Security</category>
+  </categories>
+</component>

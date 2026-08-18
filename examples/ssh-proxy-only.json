@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Example SSH Server",
+  "protocol": "ssh",
+  "transport": "direct",
+  "server": "example.com",
+  "port": 22,
+  "username": "user",
+  "authentication": {
+    "type": "password"
+  },
+  "tunnel": {
+    "mode": "proxy_only",
+    "ipv6": false,
+    "dns": {
+      "mode": "system"
+    },
+    "udpgw": {
+      "enabled": false,
+      "port": 7300
+    }
+  }
+}
