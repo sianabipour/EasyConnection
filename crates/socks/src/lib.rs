@@ -12,6 +12,6 @@ pub use error::SocksError;
 pub use nodelay::set_nodelay;
 pub use server::{ProxyHandles, ProxyServer, ProxyStats};
 pub use socks5::Socks5Auth;
-pub use upstream::{UpstreamConnector, UpstreamIo};
+pub use upstream::{record_relay, relay_both, UpstreamConnector, UpstreamIo};
 
 pub type Result<T> = std::result::Result<T, SocksError>;

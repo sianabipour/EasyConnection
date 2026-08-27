@@ -74,6 +74,8 @@ pub fn run() {
             commands::connect_profile,
             commands::disconnect,
             commands::connection_status,
+            commands::get_app_settings,
+            commands::set_preferred_routing_mode,
             commands::emergency_restore,
             commands::leak_report,
             commands::import_profile,

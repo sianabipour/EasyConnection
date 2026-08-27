@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
+use crate::server::ProxyStats;
 use crate::{Result, SocksError};
 
 /// Combined stream trait for tunnel upstreams (avoids trait-object limits).
@@ -43,4 +44,11 @@ where
         Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => Ok((0, 0)),
         Err(e) => Err(e),
     }
+}
+
+/// Count bytes: client→upstream as up, upstream→client as down.
+pub fn record_relay(stats: &ProxyStats, a_to_b: u64, b_to_a: u64) {
+    use std::sync::atomic::Ordering;
+    stats.bytes_up.fetch_add(a_to_b, Ordering::Relaxed);
+    stats.bytes_down.fetch_add(b_to_a, Ordering::Relaxed);
 }

@@ -1,4 +1,4 @@
-# Troubleshooting (Ubuntu 26.04)
+# Troubleshooting (Ubuntu 24.04+)
 
 ## Desktop app is missing from the menu
 

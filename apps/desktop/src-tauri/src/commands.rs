@@ -206,17 +206,11 @@ fn apply_common(
     cfg.kill_switch = kill_switch.unwrap_or(cfg.kill_switch);
     cfg.bypass_private_networks = bypass_private_networks.unwrap_or(cfg.bypass_private_networks);
     cfg.ipv6 = ipv6.unwrap_or(cfg.ipv6);
-    if let Some(mode) = routing_mode.as_deref() {
-        cfg.routing_mode = parse_routing_mode(mode)?;
-    }
+    // Ignore per-profile routing_mode from the UI/import — dashboard settings own it.
+    let _ = routing_mode;
+    cfg.routing_mode = rt_config::RoutingMode::ProxyOnly;
     if let Some(mode) = dns_mode.as_deref() {
         cfg.dns.mode = parse_dns_mode(mode)?;
-    } else if matches!(
-        cfg.routing_mode,
-        rt_config::RoutingMode::FullTunnel | rt_config::RoutingMode::SplitTunnel
-    ) && cfg.dns.mode == rt_config::DnsMode::System
-    {
-        cfg.dns.mode = rt_config::DnsMode::Tunnel;
     }
     if let Some(servers) = dns_servers.as_deref() {
         cfg.dns.servers = parse_dns_servers(servers);
@@ -690,6 +684,30 @@ pub async fn disconnect(ctrl: State<'_, Arc<AppController>>) -> Result<Connectio
 #[tauri::command(rename_all = "snake_case")]
 pub fn connection_status(ctrl: State<'_, Arc<AppController>>) -> ConnectionSnapshot {
     ctrl.connection_snapshot()
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_app_settings(
+    ctrl: State<'_, Arc<AppController>>,
+) -> Result<rt_config::AppSettings, String> {
+    ctrl.get_settings().map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn set_preferred_routing_mode(
+    ctrl: State<'_, Arc<AppController>>,
+    mode: String,
+) -> Result<rt_config::AppSettings, String> {
+    let parsed = parse_routing_mode(&mode)?;
+    let mut settings = ctrl.get_settings().map_err(|e| e.to_string())?;
+    settings.preferred_routing_mode = match parsed {
+        rt_config::RoutingMode::ProxyOnly => "proxy_only".into(),
+        rt_config::RoutingMode::FullTunnel => "full_tunnel".into(),
+        rt_config::RoutingMode::SplitTunnel => "split_tunnel".into(),
+    };
+    ctrl.save_settings(settings.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(settings)
 }
 
 #[tauri::command(rename_all = "snake_case")]

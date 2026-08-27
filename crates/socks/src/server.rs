@@ -85,11 +85,19 @@ impl ProxyServer {
                                     stats.active.fetch_add(1, Ordering::Relaxed);
                                     let upstream = Arc::clone(&upstream);
                                     let stats = Arc::clone(&stats);
+                                    let stats_c = Arc::clone(&stats);
                                     let auth = Arc::clone(&auth);
                                     // Spawn immediately so channel opens run in parallel,
                                     // not serialized behind other SOCKS handshakes.
                                     tokio::spawn(async move {
-                                        if let Err(e) = dispatch_socks(stream, upstream.as_ref(), auth.as_ref()).await {
+                                        if let Err(e) = dispatch_socks(
+                                            stream,
+                                            upstream.as_ref(),
+                                            auth.as_ref(),
+                                            Some(stats_c),
+                                        )
+                                        .await
+                                        {
                                             tracing::debug!(%peer, error = %e, "socks session ended");
                                         }
                                         stats.active.fetch_sub(1, Ordering::Relaxed);
@@ -122,8 +130,15 @@ impl ProxyServer {
                                     stats.active.fetch_add(1, Ordering::Relaxed);
                                     let upstream = Arc::clone(&upstream);
                                     let stats = Arc::clone(&stats);
+                                    let stats_c = Arc::clone(&stats);
                                     tokio::spawn(async move {
-                                        if let Err(e) = handle_http_connect(stream, upstream.as_ref()).await {
+                                        if let Err(e) = handle_http_connect(
+                                            stream,
+                                            upstream.as_ref(),
+                                            Some(stats_c),
+                                        )
+                                        .await
+                                        {
                                             tracing::debug!(%peer, error = %e, "http connect ended");
                                         }
                                         stats.active.fetch_sub(1, Ordering::Relaxed);
@@ -154,6 +169,7 @@ async fn dispatch_socks(
     mut stream: TcpStream,
     upstream: &dyn UpstreamConnector,
     auth: &Socks5Auth,
+    stats: Option<Arc<ProxyStats>>,
 ) -> Result<()> {
     let mut ver = [0u8; 1];
     stream.read_exact(&mut ver).await?;
@@ -162,11 +178,11 @@ async fn dispatch_socks(
         0x05 => {
             // Re-feed version byte via a tiny prepend buffer
             let mut prefixed = VersionPrefixed::new(ver[0], stream);
-            handle_socks5(&mut prefixed, upstream, auth).await
+            handle_socks5(&mut prefixed, upstream, auth, stats).await
         }
         0x04 => {
             let mut prefixed = VersionPrefixed::new(ver[0], stream);
-            handle_socks4(&mut prefixed, upstream).await
+            handle_socks4(&mut prefixed, upstream, stats).await
         }
         other => Err(SocksError::Protocol(format!(
             "unsupported proxy version {other:#x}"

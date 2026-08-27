@@ -1,4 +1,4 @@
-# Developer setup (Ubuntu 26.04)
+# Developer setup (Ubuntu 24.04+)
 
 ## Rust
 

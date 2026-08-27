@@ -454,6 +454,13 @@ pub struct AppSettings {
     pub reconnect_base_delay_ms: u64,
     pub reconnect_max_delay_ms: u64,
     pub log_level: String,
+    /// Session routing mode chosen on the dashboard (not stored per profile).
+    #[serde(default = "default_preferred_routing_mode")]
+    pub preferred_routing_mode: String,
+}
+
+fn default_preferred_routing_mode() -> String {
+    "proxy_only".into()
 }
 
 impl Default for AppSettings {
@@ -464,6 +471,7 @@ impl Default for AppSettings {
             reconnect_base_delay_ms: 1_000,
             reconnect_max_delay_ms: 60_000,
             log_level: "info".into(),
+            preferred_routing_mode: default_preferred_routing_mode(),
         }
     }
 }

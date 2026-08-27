@@ -1,6 +1,6 @@
-# Install and run Easy Connection (Ubuntu)
+# Install and run Easy Connection (Ubuntu 24.04+)
 
-The supported install is the **desktop `.deb`**. It adds Easy Connection to the Ubuntu app menu and starts `easy-helper` in the background.
+The supported install is the **desktop `.deb`**. It adds Easy Connection to the Ubuntu app menu and starts `easy-helper` in the background. Build artifacts are produced on Ubuntu 24.04 so they run on 24.04 and newer.
 
 ## From a GitHub Release (recommended)
 

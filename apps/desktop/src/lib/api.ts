@@ -7,8 +7,18 @@ import type {
   NewVlessProfile,
   ProbeResult,
   Profile,
+  RoutingMode,
   UpdateProfile,
 } from "./types";
+
+export type AppSettingsDto = {
+  theme: string;
+  start_minimized: boolean;
+  reconnect_base_delay_ms: number;
+  reconnect_max_delay_ms: number;
+  log_level: string;
+  preferred_routing_mode: string;
+};
 
 const browserFallback = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
 
@@ -201,6 +211,24 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
       } as T;
     case "import_profile":
       throw new Error("Import requires the Tauri/Rust engine.");
+    case "get_app_settings":
+      return {
+        theme: "system",
+        start_minimized: false,
+        reconnect_base_delay_ms: 1000,
+        reconnect_max_delay_ms: 60000,
+        log_level: "info",
+        preferred_routing_mode: "proxy_only",
+      } as T;
+    case "set_preferred_routing_mode":
+      return {
+        theme: "system",
+        start_minimized: false,
+        reconnect_base_delay_ms: 1000,
+        reconnect_max_delay_ms: 60000,
+        log_level: "info",
+        preferred_routing_mode: String(args?.mode || "proxy_only"),
+      } as T;
     case "tcp_probe":
     case "traceroute":
       return {
@@ -233,4 +261,7 @@ export const api = {
   tcpProbe: (host: string, port?: number) =>
     call<ProbeResult>("tcp_probe", { host, port }),
   traceroute: (host: string) => call<ProbeResult>("traceroute", { host }),
+  getSettings: () => call<AppSettingsDto>("get_app_settings"),
+  setPreferredRoutingMode: (mode: RoutingMode | string) =>
+    call<AppSettingsDto>("set_preferred_routing_mode", { mode }),
 };

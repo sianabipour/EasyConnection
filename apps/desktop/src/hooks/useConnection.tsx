@@ -7,16 +7,18 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "../lib/api";
-import type { ConnectionSnapshot, Profile } from "../lib/types";
+import type { ConnectionSnapshot, Profile, RoutingMode } from "../lib/types";
 
 type Ctx = {
   snapshot: ConnectionSnapshot;
   profiles: Profile[];
   busy: boolean;
   error: string | null;
+  preferredMode: RoutingMode;
   refresh: () => Promise<void>;
   connect: (id: string) => Promise<void>;
   disconnect: () => Promise<void>;
+  setPreferredMode: (mode: RoutingMode) => Promise<void>;
   addSsh: (input: Parameters<typeof api.addSshProfile>[0]) => Promise<void>;
   addSs: (input: Parameters<typeof api.addSsProfile>[0]) => Promise<void>;
   addVless: (input: Parameters<typeof api.addVlessProfile>[0]) => Promise<void>;
@@ -58,11 +60,22 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preferredMode, setPreferredModeState] = useState<RoutingMode>("proxy_only");
 
   const refresh = useCallback(async () => {
-    const [s, p] = await Promise.all([api.status(), api.listProfiles()]);
+    const [s, p, settings] = await Promise.all([
+      api.status(),
+      api.listProfiles(),
+      api.getSettings().catch(() => null),
+    ]);
     setSnapshot(s);
     setProfiles(p);
+    if (settings?.preferred_routing_mode) {
+      const m = settings.preferred_routing_mode;
+      if (m === "full_tunnel" || m === "split_tunnel" || m === "proxy_only") {
+        setPreferredModeState(m);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -94,6 +107,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       setSnapshot(await api.disconnect());
     } finally {
       setBusy(false);
+    }
+  };
+
+  const setPreferredMode = async (mode: RoutingMode) => {
+    setPreferredModeState(mode);
+    try {
+      const s = await api.setPreferredRoutingMode(mode);
+      if (s.preferred_routing_mode === "full_tunnel" || s.preferred_routing_mode === "split_tunnel") {
+        setPreferredModeState(s.preferred_routing_mode);
+      } else {
+        setPreferredModeState("proxy_only");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -136,9 +163,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         profiles,
         busy,
         error,
+        preferredMode,
         refresh,
         connect,
         disconnect,
+        setPreferredMode,
         addSsh,
         addSs,
         addVless,

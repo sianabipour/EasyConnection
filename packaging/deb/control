@@ -4,12 +4,13 @@ Section: net
 Priority: optional
 Architecture: amd64
 Installed-Size: 0
-Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.39), libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, librsvg2-2, polkitd, pkexec
+Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.35), libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, librsvg2-2, polkitd, pkexec
 Recommends: systemd-resolved, hicolor-icon-theme, desktop-file-utils
 Maintainer: Easy Connection Contributors <easy@localhost>
 Description: Easy Connection desktop client for Ubuntu
  Native GUI and CLI for SSH, Shadowsocks, and VLESS tunnels with
  local SOCKS/HTTP proxies and optional system-wide TCP intercept.
+ Supports Ubuntu 24.04 LTS and newer.
  .
  Installs the Easy Connection app menu entry, the "easy" command,
  the easy-helper background service, and a polkit policy so Connect

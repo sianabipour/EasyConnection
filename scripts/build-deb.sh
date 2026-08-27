@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the easy-connection .deb (CLI + privileged helper) for Ubuntu 26.04.
+# Build the easy-connection .deb (CLI + privileged helper) for Ubuntu 24.04+.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

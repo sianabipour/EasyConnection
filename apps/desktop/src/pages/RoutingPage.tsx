@@ -61,13 +61,16 @@ export function RoutingPage() {
 
       <div className="mt-6 space-y-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4 text-sm">
         <Row k="Mode" v={snapshot.routing_mode.replaceAll("_", " ")} />
+        <p className="mt-2 text-xs text-[var(--color-muted)]">
+          Proxy / VPN mode is set on Home before Connect (not in profile JSON).
+        </p>
         <Row k="TUN" v={snapshot.tun_name || "not attached"} />
         <Row k="Helper" v={snapshot.helper_ok ? "session active" : "idle"} />
         <Row k="Kill switch" v={snapshot.kill_switch ? "armed" : "off"} />
         <Row k="DNS" v={snapshot.dns_status} />
         <Row k="IPv6" v={snapshot.ipv6 ? "enabled" : "disabled"} />
         <Row k="UDPGW" v={snapshot.udpgw_status} />
-        <Row k="Profile" v={active ? `${active.name} (${active.routing_mode})` : "—"} />
+        <Row k="Profile" v={active ? active.name : "—"} />
         {snapshot.udp_note && (
           <p className="pt-2 text-xs text-[var(--color-muted)]">{snapshot.udp_note}</p>
         )}

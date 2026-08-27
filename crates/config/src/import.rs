@@ -47,6 +47,8 @@ fn parse_json(raw: &str) -> Result<ParsedImport> {
     };
     profile.id = uuid::Uuid::new_v4();
     profile.updated_at = chrono::Utc::now();
+    // Routing mode is a dashboard/session choice — never import it from files.
+    profile.routing_mode = RoutingMode::ProxyOnly;
     crate::validate_connection(&profile)?;
     Ok(ParsedImport {
         config: profile,

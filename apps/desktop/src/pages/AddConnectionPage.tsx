@@ -9,17 +9,11 @@ import type {
   TransportKind,
 } from "../lib/types";
 
-function asRoutingMode(value: string | undefined): RoutingMode {
-  if (value === "full_tunnel" || value === "fulltunnel") return "full_tunnel";
-  if (value === "split_tunnel" || value === "splittunnel") return "split_tunnel";
-  return "proxy_only";
-}
-
-function asDnsMode(value: string | undefined, routing: RoutingMode): DnsMode {
+function asDnsMode(value: string | undefined): DnsMode {
   if (value === "custom") return "custom";
   if (value === "remote") return "remote";
-  if (value === "system") return routing === "proxy_only" ? "system" : "tunnel";
-  return routing === "proxy_only" ? "system" : "tunnel";
+  if (value === "tunnel") return "tunnel";
+  return "system";
 }
 
 function asProtocol(value: string | undefined): ProtocolKind {
@@ -66,7 +60,6 @@ export function AddConnectionPage() {
   const [advanced, setAdvanced] = useState(false);
   const [protocol, setProtocol] = useState<ProtocolKind>("ssh");
   const [transport, setTransport] = useState<TransportKind>("direct");
-  const [mode, setMode] = useState<RoutingMode>("proxy_only");
   const [dnsMode, setDnsMode] = useState<DnsMode>("system");
   const [ipv6, setIpv6] = useState(false);
   const [udpgw, setUdpgw] = useState(false);
@@ -100,13 +93,6 @@ export function AddConnectionPage() {
     split_domains: "",
   });
 
-  function setRoutingMode(next: RoutingMode) {
-    setMode(next);
-    if (next !== "proxy_only" && dnsMode === "system") {
-      setDnsMode("tunnel");
-    }
-  }
-
   function changeProtocol(next: ProtocolKind) {
     if (editing) return;
     const prevDefault = defaultPort(protocol);
@@ -122,11 +108,10 @@ export function AddConnectionPage() {
     void getProfile(id)
       .then((profile) => {
         if (cancelled) return;
-        const routing = asRoutingMode(profile.routing_mode);
+        const routingIgnored = asDnsMode(profile.dns_mode);
         setProtocol(asProtocol(profile.protocol));
         setTransport(asTransport(profile.transport));
-        setMode(routing);
-        setDnsMode(asDnsMode(profile.dns_mode, routing));
+        setDnsMode(routingIgnored);
         setIpv6(Boolean(profile.ipv6));
         setUdpgw(Boolean(profile.udpgw_enabled));
         setTlsVerify(profile.tls_verify !== false);
@@ -194,7 +179,7 @@ export function AddConnectionPage() {
       port: Number(fd.get("port") || defaultPort(protocol)),
       socks_port: Number(fd.get("socks_port") || 1080),
       http_port: Number(fd.get("http_port") || 8080),
-      routing_mode: mode,
+      routing_mode: "proxy_only" as RoutingMode,
       kill_switch: fd.get("kill_switch") === "on",
       bypass_private_networks: advanced ? fd.get("bypass_private") === "on" : true,
       ipv6,
@@ -254,7 +239,7 @@ export function AddConnectionPage() {
           udpgw_transparent_dns: fd.get("udpgw_dns") === "on",
         });
       }
-      navigate("/servers");
+      navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -396,30 +381,9 @@ export function AddConnectionPage() {
           </p>
         )}
 
-        <fieldset className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
-          <legend className="px-1 text-sm text-[var(--color-muted)]">Connection Mode</legend>
-          <ModeRadio
-            value="proxy_only"
-            checked={mode === "proxy_only"}
-            onChange={setRoutingMode}
-            title="Proxy Only"
-            hint="Apps must use the local SOCKS/HTTP ports. No root helper required."
-          />
-          <ModeRadio
-            value="full_tunnel"
-            checked={mode === "full_tunnel"}
-            onChange={setRoutingMode}
-            title="VPN / Full Tunnel"
-            hint="Routes system TCP through the selected protocol via TUN easy0. Requires the privileged helper."
-          />
-          <ModeRadio
-            value="split_tunnel"
-            checked={mode === "split_tunnel"}
-            onChange={setRoutingMode}
-            title="Split Tunnel"
-            hint="Full-tunnel TCP plus extra CIDR/domain bypass. Process/cgroup split is not implemented."
-          />
-        </fieldset>
+        <p className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] px-4 py-3 text-xs text-[var(--color-muted)]">
+          Proxy vs VPN / tunnel mode is chosen on the Home dashboard before Connect — not in this form.
+        </p>
 
         {protocol === "ssh" && (
           <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
@@ -580,30 +544,6 @@ export function AddConnectionPage() {
         </button>
       </form>
     </div>
-  );
-}
-
-function ModeRadio(props: {
-  value: RoutingMode;
-  checked: boolean;
-  onChange: (v: RoutingMode) => void;
-  title: string;
-  hint: string;
-}) {
-  return (
-    <label className="mt-2 flex cursor-pointer gap-3 text-left">
-      <input
-        type="radio"
-        name="routing_mode"
-        className="mt-1 accent-[var(--color-accent)]"
-        checked={props.checked}
-        onChange={() => props.onChange(props.value)}
-      />
-      <span>
-        <span className="block text-sm text-white">{props.title}</span>
-        <span className="block text-xs text-[var(--color-muted)]">{props.hint}</span>
-      </span>
-    </label>
   );
 }
 

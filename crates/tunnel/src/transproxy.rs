@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rt_config::DnsOverTcp;
 use rt_dns::{default_dns_servers, exchange_over_tcp};
-use rt_socks::{UpstreamConnector, UpstreamIo};
+use rt_socks::{record_relay, ProxyStats, UpstreamConnector, UpstreamIo};
 use rt_udpgw::UdpgwHandle;
 use tokio::io::{AsyncReadExt, Interest};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -27,6 +27,7 @@ const IPV6_ORIGDSTADDR: i32 = 74;
 pub async fn run_transproxy(
     listener: TcpListener,
     upstream: Arc<dyn UpstreamConnector>,
+    stats: Arc<ProxyStats>,
     stop: CancellationToken,
 ) -> Result<()> {
     let listen = listener.local_addr().ok();
@@ -39,8 +40,11 @@ pub async fn run_transproxy(
                     Ok((stream, peer)) => {
                         let _ = stream.set_nodelay(true);
                         let upstream = Arc::clone(&upstream);
+                        let stats = Arc::clone(&stats);
                         tokio::spawn(async move {
-                            if let Err(e) = handle_intercepted(stream, upstream.as_ref()).await {
+                            if let Err(e) =
+                                handle_intercepted(stream, upstream.as_ref(), &stats).await
+                            {
                                 debug!(%peer, error = %e, "transproxy session ended");
                             }
                         });
@@ -59,6 +63,7 @@ pub async fn run_transproxy(
 async fn handle_intercepted(
     mut client: TcpStream,
     upstream: &dyn UpstreamConnector,
+    stats: &ProxyStats,
 ) -> io::Result<()> {
     let dest = original_dst(&client)?;
     async {
@@ -69,8 +74,9 @@ async fn handle_intercepted(
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     "SSH direct-tcpip channel open"
                 );
-                if let Err(e) = tokio::io::copy_bidirectional(&mut client, &mut rhs).await {
-                    debug!(%dest, error = %e, "transproxy relay ended");
+                match tokio::io::copy_bidirectional(&mut client, &mut rhs).await {
+                    Ok((up_n, down_n)) => record_relay(stats, up_n, down_n),
+                    Err(e) => debug!(%dest, error = %e, "transproxy relay ended"),
                 }
             }
             Err(e) => debug!(%dest, error = %e, "SSH forward failed"),

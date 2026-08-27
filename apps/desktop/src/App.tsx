@@ -1,6 +1,5 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { HomePage } from "./pages/HomePage";
-import { ServersPage } from "./pages/ServersPage";
 import { AddConnectionPage } from "./pages/AddConnectionPage";
 import { ProxyPage } from "./pages/ProxyPage";
 import { RoutingPage } from "./pages/RoutingPage";
@@ -11,8 +10,6 @@ import { ConnectionProvider, useConnection } from "./hooks/useConnection";
 
 const nav = [
   { to: "/", label: "Home" },
-  { to: "/servers", label: "Servers" },
-  { to: "/add", label: "Add Connection" },
   { to: "/proxy", label: "Proxy" },
   { to: "/routing", label: "Routing" },
   { to: "/logs", label: "Logs" },
@@ -67,7 +64,7 @@ function Shell() {
       <main className="min-w-0 flex-1 overflow-auto p-6 md:p-8">
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/servers" element={<ServersPage />} />
+          <Route path="/servers" element={<Navigate to="/" replace />} />
           <Route path="/servers/:id/edit" element={<AddConnectionPage />} />
           <Route path="/add" element={<AddConnectionPage />} />
           <Route path="/proxy" element={<ProxyPage />} />

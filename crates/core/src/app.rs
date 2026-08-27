@@ -59,6 +59,8 @@ impl AppController {
 
     pub fn save_profile(&self, mut cfg: ConnectionConfig) -> Result<ConnectionConfig> {
         cfg.updated_at = chrono::Utc::now();
+        // Profiles do not own routing mode; dashboard settings do.
+        cfg.routing_mode = rt_config::RoutingMode::ProxyOnly;
         validate_connection(&cfg)?;
         self.store.upsert_profile(&cfg)?;
         Ok(cfg)
@@ -163,7 +165,21 @@ impl AppController {
     }
 
     pub async fn connect(&self, id: Uuid) -> Result<ConnectionSnapshot> {
-        let profile = self.store.get_profile(id)?;
+        let mut profile = self.store.get_profile(id)?;
+        // Dashboard / settings choose proxy vs VPN — not the imported profile.
+        let settings = self.store.get_settings()?;
+        profile.routing_mode = match settings.preferred_routing_mode.as_str() {
+            "full_tunnel" | "fulltunnel" | "vpn" | "full" => rt_config::RoutingMode::FullTunnel,
+            "split_tunnel" | "splittunnel" | "split" => rt_config::RoutingMode::SplitTunnel,
+            _ => rt_config::RoutingMode::ProxyOnly,
+        };
+        if matches!(
+            profile.routing_mode,
+            rt_config::RoutingMode::FullTunnel | rt_config::RoutingMode::SplitTunnel
+        ) && profile.dns.mode == rt_config::DnsMode::System
+        {
+            profile.dns.mode = rt_config::DnsMode::Tunnel;
+        }
         Ok(self.connections.connect(profile).await?)
     }
 

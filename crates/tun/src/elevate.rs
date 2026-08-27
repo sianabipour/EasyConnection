@@ -99,7 +99,7 @@ pub async fn ensure_helper_running() -> std::result::Result<(), ElevateError> {
         .spawn()
         .map_err(|e| ElevateError::Spawn(e.to_string()))?;
 
-    for _ in 0..50 {
+    for _ in 0..150 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if helper_reachable().await {
             info!("privileged helper reachable after pkexec");

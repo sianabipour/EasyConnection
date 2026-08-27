@@ -1,9 +1,16 @@
+use std::sync::Arc;
+
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
-use crate::upstream::{relay_both, UpstreamConnector};
+use crate::server::ProxyStats;
+use crate::upstream::{record_relay, relay_both, UpstreamConnector};
 use crate::{Result, SocksError};
 
-pub async fn handle_http_connect<S>(client: S, upstream: &dyn UpstreamConnector) -> Result<()>
+pub async fn handle_http_connect<S>(
+    client: S,
+    upstream: &dyn UpstreamConnector,
+    stats: Option<Arc<ProxyStats>>,
+) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -35,7 +42,11 @@ where
             client
                 .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 .await?;
-            let _ = relay_both(client, up).await;
+            if let Ok((up_n, down_n)) = relay_both(client, up).await {
+                if let Some(s) = stats.as_ref() {
+                    record_relay(s, up_n, down_n);
+                }
+            }
             Ok(())
         }
         Err(e) => {

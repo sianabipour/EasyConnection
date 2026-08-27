@@ -9,8 +9,11 @@ easy-connection (0.1.1) stable; urgency=medium
   * Ship and uninstall polkit policy with the .deb; polkitd/pkexec dependency.
   * App icon regenerated from apps/desktop/src-tauri/icon.png for GNOME
     hicolor / taskbar (Icon=easy-connection).
+  * Ubuntu 24.04+ packaging (libc6 >= 2.35; release builds on ubuntu-24.04).
+  * Dashboard owns Proxy/VPN mode; imports no longer apply routing_mode.
+  * Home lists configs with Connect/Ping; live Up/Down traffic rates.
 
- -- Easy Connection Contributors <easy@localhost>  Thu, 27 Aug 2026 14:00:00 +0000
+ -- Easy Connection Contributors <easy@localhost>  Thu, 27 Aug 2026 16:00:00 +0000
 
 easy-connection (0.1.0) UNRELEASED; urgency=medium
 

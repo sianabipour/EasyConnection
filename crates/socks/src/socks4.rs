@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::upstream::{relay_both, UpstreamConnector};
+use crate::server::ProxyStats;
+use crate::upstream::{record_relay, relay_both, UpstreamConnector};
 use crate::{Result, SocksError};
 
 const VER4: u8 = 0x04;
@@ -8,7 +11,11 @@ const CMD_CONNECT: u8 = 0x01;
 const REP_GRANTED: u8 = 0x5A;
 const REP_REJECTED: u8 = 0x5B;
 
-pub async fn handle_socks4<S>(mut client: S, upstream: &dyn UpstreamConnector) -> Result<()>
+pub async fn handle_socks4<S>(
+    mut client: S,
+    upstream: &dyn UpstreamConnector,
+    stats: Option<Arc<ProxyStats>>,
+) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -60,7 +67,11 @@ where
     match upstream.connect(&host, port).await {
         Ok(up) => {
             write_reply(&mut client, REP_GRANTED).await?;
-            let _ = relay_both(client, up).await;
+            if let Ok((up_n, down_n)) = relay_both(client, up).await {
+                if let Some(s) = stats.as_ref() {
+                    record_relay(s, up_n, down_n);
+                }
+            }
             Ok(())
         }
         Err(e) => {

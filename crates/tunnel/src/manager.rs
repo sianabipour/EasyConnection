@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use rt_config::{ConnectionConfig, DnsOverTcp, Protocol, RoutingMode, Transport};
 use rt_secrets::SecretsStore;
 use rt_shadowsocks::ShadowsocksConnector;
-use rt_socks::{ProxyHandles, ProxyServer, Socks5Auth};
+use rt_socks::{ProxyHandles, ProxyServer, ProxyStats, Socks5Auth};
 use rt_ssh::{SshConnectOptions, SshSession};
 use rt_tls::{dial, DialRequest};
 use rt_tun::ipc::ApplySpec;
@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::state::{ConnectionPhase, ConnectionSnapshot, ConnectionState};
+use crate::state::{ConnectionPhase, ConnectionSnapshot, ConnectionState, TrafficStats};
 use crate::transproxy::{
     bind_udp_origdst, drain_tun, pump_udpgw_replies, run_dns_intercept, run_transproxy,
     run_udp_intercept,
@@ -33,6 +33,8 @@ struct ActiveSession {
     helper: Option<HelperClient>,
     tun_stop: Option<CancellationToken>,
     tun_task: Option<tokio::task::JoinHandle<()>>,
+    stats_stop: CancellationToken,
+    stats_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 pub struct ConnectionManager {
@@ -215,7 +217,9 @@ impl ConnectionManager {
                 ConnectionState::EstablishingTunnel,
                 ConnectionPhase::ConfiguringRoutes,
             );
-            match start_full_tunnel(&profile, Arc::clone(&upstream)).await {
+            match start_full_tunnel(&profile, Arc::clone(&upstream), Arc::clone(&proxies.stats))
+                .await
+            {
                 Ok(tun) => {
                     helper_ok = true;
                     tun_name = Some(TUN_NAME.to_string());
@@ -286,12 +290,23 @@ impl ConnectionManager {
             "tunnel ready"
         );
 
+        let stats = Arc::clone(&proxies.stats);
+        let stats_stop = CancellationToken::new();
+        let stats_task = Some(spawn_stats_poller(
+            Arc::clone(&self.snapshot),
+            self.tx.clone(),
+            stats,
+            stats_stop.clone(),
+        ));
+
         *self.active.lock().await = Some(ActiveSession {
             ssh,
             proxies,
             helper,
             tun_stop,
             tun_task,
+            stats_stop,
+            stats_task,
         });
 
         Ok(snap)
@@ -302,6 +317,10 @@ impl ConnectionManager {
 
         let active = self.active.lock().await.take();
         if let Some(session) = active {
+            session.stats_stop.cancel();
+            if let Some(task) = session.stats_task {
+                task.abort();
+            }
             if let Some(stop) = session.tun_stop {
                 stop.cancel();
             }
@@ -489,9 +508,57 @@ async fn start_udpgw_client(
     }
 }
 
+fn spawn_stats_poller(
+    snapshot: Arc<RwLock<ConnectionSnapshot>>,
+    tx: watch::Sender<ConnectionSnapshot>,
+    stats: Arc<ProxyStats>,
+    stop: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        use std::sync::atomic::Ordering;
+        let mut last_up = 0u64;
+        let mut last_down = 0u64;
+        let mut last_at = std::time::Instant::now();
+        loop {
+            tokio::select! {
+                _ = stop.cancelled() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(1000)) => {
+                    let up = stats.bytes_up.load(Ordering::Relaxed);
+                    let down = stats.bytes_down.load(Ordering::Relaxed);
+                    let active = stats.active.load(Ordering::Relaxed);
+                    let elapsed = last_at.elapsed().as_secs_f64().max(0.001);
+                    let rate_up = ((up.saturating_sub(last_up)) as f64 / elapsed) as u64;
+                    let rate_down = ((down.saturating_sub(last_down)) as f64 / elapsed) as u64;
+                    last_up = up;
+                    last_down = down;
+                    last_at = std::time::Instant::now();
+
+                    let mut snap = snapshot.read().clone();
+                    if !matches!(
+                        snap.state,
+                        ConnectionState::Connected | ConnectionState::Degraded
+                    ) {
+                        continue;
+                    }
+                    snap.stats = TrafficStats {
+                        bytes_down: down,
+                        bytes_up: up,
+                        rate_down_bps: rate_down,
+                        rate_up_bps: rate_up,
+                        active_flows: active,
+                    };
+                    *snapshot.write() = snap.clone();
+                    let _ = tx.send(snap);
+                }
+            }
+        }
+    })
+}
+
 async fn start_full_tunnel(
     profile: &ConnectionConfig,
     upstream: Arc<dyn rt_socks::UpstreamConnector>,
+    traffic: Arc<ProxyStats>,
 ) -> Result<StartedTun> {
     // Auto-elevate via polkit when the helper is not already running (systemd or prior session).
     rt_tun::ensure_helper_or_tun_error().await?;
@@ -547,8 +614,9 @@ async fn start_full_tunnel(
     } else {
         None
     };
+    let traffic_tcp = Arc::clone(&traffic);
     tokio::spawn(async move {
-        if let Err(e) = run_transproxy(tcp_listener, up_tcp, stop_tcp).await {
+        if let Err(e) = run_transproxy(tcp_listener, up_tcp, traffic_tcp, stop_tcp).await {
             warn!(error = %e, "transproxy exited");
         }
     });
@@ -577,8 +645,9 @@ async fn start_full_tunnel(
             Ok(v6) => {
                 let stop_v6 = stop.clone();
                 let up_v6 = Arc::clone(&upstream);
+                let traffic_v6 = Arc::clone(&traffic);
                 tokio::spawn(async move {
-                    if let Err(e) = run_transproxy(v6, up_v6, stop_v6).await {
+                    if let Err(e) = run_transproxy(v6, up_v6, traffic_v6, stop_v6).await {
                         warn!(error = %e, "IPv6 transproxy exited");
                     }
                 });
