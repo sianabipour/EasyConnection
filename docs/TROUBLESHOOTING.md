@@ -21,7 +21,7 @@ or **pkexec is not available**.
 4. Override path: `export EASY_HELPER_SOCKET=/run/easy/helper.sock`
 5. Manual foreground (debug only): `sudo easy-helper --allow-uid "$(id -u)"`
 6. Missing `/dev/net/tun`: `sudo modprobe tun`
-7. Missing polkit: install `policykit-1` / `pkexec`
+7. Missing polkit: install `polkitd` and `pkexec`
 
 The helper needs `CAP_NET_ADMIN` (and `CAP_NET_RAW`). The packaged unit grants those via systemd. Running the binary as a normal user cannot create `easy0`.
 

@@ -4,8 +4,8 @@ Section: net
 Priority: optional
 Architecture: amd64
 Installed-Size: 0
-Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.39), libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, librsvg2-2, policykit-1
-Recommends: systemd-resolved, hicolor-icon-theme, desktop-file-utils, pkexec
+Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.39), libwebkit2gtk-4.1-0, libgtk-3-0, libayatana-appindicator3-1, librsvg2-2, polkitd, pkexec
+Recommends: systemd-resolved, hicolor-icon-theme, desktop-file-utils
 Maintainer: Easy Connection Contributors <easy@localhost>
 Description: Easy Connection desktop client for Ubuntu
  Native GUI and CLI for SSH, Shadowsocks, and VLESS tunnels with

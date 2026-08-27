@@ -31,7 +31,7 @@ Proxy-only (local SOCKS on `127.0.0.1:1080`) works even if you never use full tu
 
 ## Build and install from source
 
-Needs Rust 1.80+, Node 20+, and Tauri Linux packages (see `docs/DEVELOPMENT.md`).
+Needs Rust 1.80+, Node 22+, and Tauri Linux packages (see `docs/DEVELOPMENT.md`).
 
 ```bash
 ./scripts/build-desktop-deb.sh

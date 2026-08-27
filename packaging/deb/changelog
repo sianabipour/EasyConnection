@@ -6,7 +6,7 @@ easy-connection (0.1.1) stable; urgency=medium
   * Full-tunnel Connect elevates easy-helper via polkit/pkexec
     (com.easyconnection.helper.run); no manual sudo required when policy
     is installed. Honest elevation-denied / pkexec-missing errors.
-  * Ship and uninstall polkit policy with the .deb; policykit-1 dependency.
+  * Ship and uninstall polkit policy with the .deb; polkitd/pkexec dependency.
   * App icon regenerated from apps/desktop/src-tauri/icon.png for GNOME
     hicolor / taskbar (Icon=easy-connection).
 

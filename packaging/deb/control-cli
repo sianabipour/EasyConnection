@@ -4,8 +4,8 @@ Section: net
 Priority: optional
 Architecture: amd64
 Installed-Size: 0
-Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.39), policykit-1
-Recommends: systemd-resolved, pkexec
+Depends: nftables, iproute2, openssl, systemd, libc6 (>= 2.39), polkitd, pkexec
+Recommends: systemd-resolved
 Maintainer: Easy Connection Contributors <easy@localhost>
 Description: Easy Connection CLI and privileged helper
  Headless package: the "easy" command and easy-helper systemd service.

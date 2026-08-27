@@ -65,3 +65,9 @@ impl From<russh::keys::Error> for SshError {
         }
     }
 }
+
+impl From<russh::AgentAuthError> for SshError {
+    fn from(value: russh::AgentAuthError) -> Self {
+        Self::Russh(value.to_string())
+    }
+}

@@ -131,7 +131,7 @@ App → kernel stack → TUN easy0 → userspace packet IO
 
 | Area | Choice | Notes |
 |------|--------|-------|
-| SSH | `russh` + `russh-keys` | modern async SSH |
+| SSH | `russh` | modern async SSH |
 | TLS | system `openssl s_client` | verify by default; fingerprint = ALPN only |
 | SOCKS | custom + `tokio` | SOCKS4/4a/5 + HTTP CONNECT |
 | Shadowsocks | `rt-shadowsocks` | SIP004 AEAD TCP (`aes-128-gcm` / `aes-256-gcm`) |

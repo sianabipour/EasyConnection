@@ -11,7 +11,7 @@ rustc --version   # 1.80+
 ## Node (UI)
 
 ```bash
-node -v   # 20+
+node -v   # 22+
 cd apps/desktop && npm install
 ```
 

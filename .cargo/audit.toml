@@ -1,0 +1,9 @@
+# cargo-audit configuration (https://github.com/rustsec/rustsec)
+[advisories]
+ignore = [
+    # Marvin Attack (RSA PKCS#1 v1.5 timing). No fixed upgrade exists in the
+    # `rsa` crate. Pulled transitively by `russh` for SSH host/user keys.
+    # Acceptable for our client: we prefer modern host keys (ed25519) and
+    # do not implement a custom RSA decrypt oracle.
+    "RUSTSEC-2023-0071",
+]

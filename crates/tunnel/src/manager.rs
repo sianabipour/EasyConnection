@@ -760,7 +760,7 @@ fn full_tunnel_error(detail: &str) -> String {
     format!(
         "VPN / full-tunnel mode could not be started.\n\n{detail}\n\nPossible causes:\n\
          • polkit elevation was denied or cancelled\n\
-         • pkexec / policykit-1 is not installed\n\
+         • pkexec / polkitd is not installed\n\
          • privileged helper failed to start\n\
          • /dev/net/tun or nftables is unavailable\n\n\
          The desktop app will prompt for authentication via pkexec when needed.\n\

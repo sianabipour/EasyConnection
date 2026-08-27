@@ -40,7 +40,8 @@
           "iproute2",
           "openssl",
           "libwebkit2gtk-4.1-0",
-          "policykit-1"
+          "polkitd",
+          "pkexec"
         ],
         "files": {
           "/usr/lib/easy/easy-helper": "../../../target/release/easy-helper",

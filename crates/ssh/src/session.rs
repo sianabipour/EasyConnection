@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use rt_config::{AuthMethod, ConnectionConfig, HostKeyPolicy, ProtocolSettings};
 use rt_secrets::SecretsStore;
 use rt_socks::{Result as SocksResult, SocksError, UpstreamConnector, UpstreamIo};
-use russh::client::{self, Handle, Msg};
-use russh::keys::{self, key::PrivateKeyWithHashAlg};
+use russh::client::{self, AuthResult, Handle, Msg};
+use russh::keys::agent::AgentIdentity;
+use russh::keys::{self, key::PrivateKeyWithHashAlg, HashAlg};
 use russh::{ChannelStream, Preferred};
 use tokio::time::timeout;
 use tracing::{debug, info};
@@ -20,13 +21,13 @@ struct ClientHandler {
     verifier: HostKeyVerifier,
 }
 
-#[async_trait]
 impl client::Handler for ClientHandler {
     type Error = SshError;
 
+    // russh 0.60+: Handler methods use RPITIT — do not wrap with async_trait.
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &keys::PublicKey,
     ) -> std::result::Result<bool, Self::Error> {
         self.verifier.verify(server_public_key).await
     }
@@ -230,7 +231,7 @@ async fn authenticate(
     auth: &AuthMethod,
     secrets: &SecretsStore,
 ) -> Result<()> {
-    let ok = match auth {
+    let result = match auth {
         AuthMethod::Password { secret } => {
             let secret_ref = secret
                 .as_ref()
@@ -261,7 +262,15 @@ async fn authenticate(
                     "private key path or key material required".into(),
                 ));
             };
-            let key = PrivateKeyWithHashAlg::new(Arc::new(key), None)?;
+            let hash_alg = if key.algorithm().is_rsa() {
+                handle
+                    .best_supported_rsa_hash()
+                    .await?
+                    .unwrap_or(Some(HashAlg::Sha512))
+            } else {
+                None
+            };
+            let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
             handle.authenticate_publickey(username, key).await?
         }
         AuthMethod::Agent => {
@@ -272,28 +281,50 @@ async fn authenticate(
                 .request_identities()
                 .await
                 .map_err(|e| SshError::Russh(e.to_string()))?;
-            let mut success = false;
+            let mut last = AuthResult::Failure {
+                remaining_methods: russh::MethodSet::empty(),
+                partial_success: false,
+            };
             for identity in identities {
+                let (pubkey, hash_alg) = match &identity {
+                    AgentIdentity::PublicKey { key, .. } => {
+                        let hash_alg = if key.algorithm().is_rsa() {
+                            handle
+                                .best_supported_rsa_hash()
+                                .await?
+                                .unwrap_or(Some(HashAlg::Sha512))
+                        } else {
+                            None
+                        };
+                        (key.clone(), hash_alg)
+                    }
+                    AgentIdentity::Certificate { certificate, .. } => (
+                        keys::PublicKey::new(certificate.public_key().clone(), ""),
+                        None,
+                    ),
+                };
                 match handle
-                    .authenticate_publickey_with(username, identity, &mut agent)
+                    .authenticate_publickey_with(username, pubkey, hash_alg, &mut agent)
                     .await
                 {
-                    Ok(true) => {
-                        success = true;
+                    Ok(r) if r.success() => {
+                        last = r;
                         break;
                     }
-                    Ok(false) => continue,
+                    Ok(r) => {
+                        last = r;
+                    }
                     Err(e) => {
                         debug!(error = %e, "agent identity rejected");
                     }
                 }
             }
-            success
+            last
         }
         AuthMethod::None => handle.authenticate_none(username).await?,
     };
 
-    if ok {
+    if result.success() {
         Ok(())
     } else {
         Err(SshError::AuthenticationFailed)

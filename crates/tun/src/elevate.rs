@@ -16,7 +16,7 @@ pub enum ElevateError {
     #[error("Elevation denied: polkit authentication was cancelled or rejected.")]
     Denied,
     #[error(
-        "pkexec is not available on this system. Install policykit-1, or run: sudo easy-helper --allow-uid $(id -u)"
+        "pkexec is not available on this system. Install polkitd and pkexec, or run: sudo easy-helper --allow-uid $(id -u)"
     )]
     PkexecMissing,
     #[error("Helper binary not found at {0}. Reinstall the easy-connection package.")]

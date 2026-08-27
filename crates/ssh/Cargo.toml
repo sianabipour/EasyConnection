@@ -15,7 +15,6 @@ rt-secrets = { workspace = true }
 rt-socks = { workspace = true }
 rt-tls = { workspace = true }
 russh = { workspace = true }
-russh-keys = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
