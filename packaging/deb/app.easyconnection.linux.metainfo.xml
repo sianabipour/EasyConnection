@@ -21,4 +21,11 @@
     <category>Network</category>
     <category>Security</category>
   </categories>
+  <releases>
+    <release version="0.1.1" date="2026-08-27">
+      <description>
+        <p>Tunnel latency improvements, polkit elevation for full tunnel, and updated app icon.</p>
+      </description>
+    </release>
+  </releases>
 </component>

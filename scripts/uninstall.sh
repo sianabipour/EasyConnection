@@ -27,6 +27,7 @@ elif [[ -x "$ROOT/target/release/easy-helper" ]]; then
   "$ROOT/target/release/easy-helper" --cleanup-and-exit || true
 fi
 
+rm -f /usr/share/polkit-1/actions/com.easyconnection.helper.policy
 rm -f /usr/local/bin/easy /usr/bin/easy /usr/bin/easy-desktop /usr/bin/easy-helper
 rm -f /usr/lib/easy/easy-helper /usr/lib/easy/cleanup-network.sh
 rm -f /etc/systemd/system/easy-helper.service
@@ -37,6 +38,7 @@ rm -f /usr/share/pixmaps/easy-connection.png
 rm -f /usr/share/icons/hicolor/32x32/apps/easy-connection.png
 rm -f /usr/share/icons/hicolor/128x128/apps/easy-connection.png
 rm -f /usr/share/icons/hicolor/256x256/apps/easy-connection.png
+rm -f /usr/share/icons/hicolor/512x512/apps/easy-connection.png
 rmdir /usr/lib/easy >/dev/null 2>&1 || true
 rm -rf /run/easy
 systemctl daemon-reload >/dev/null 2>&1 || true

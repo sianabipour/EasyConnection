@@ -19,4 +19,5 @@ if command -v resolvectl >/dev/null 2>&1; then
   resolvectl revert easy0 >/dev/null 2>&1 || true
 fi
 rm -rf /run/easy
+rm -f /usr/share/polkit-1/actions/com.easyconnection.helper.policy
 exit 0

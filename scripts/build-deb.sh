@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
 
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.1}"
 ARCH="${ARCH:-amd64}"
 OUT="$ROOT/packaging/out"
 STAGE="$OUT/easy-connection_${VERSION}_${ARCH}"
@@ -19,12 +19,15 @@ mkdir -p \
   "$STAGE/usr/bin" \
   "$STAGE/usr/lib/easy" \
   "$STAGE/usr/lib/systemd/system" \
+  "$STAGE/usr/share/polkit-1/actions" \
   "$STAGE/usr/share/doc/easy-connection"
 
 install -Dm755 "$ROOT/target/release/easy" "$STAGE/usr/bin/easy"
 install -Dm755 "$ROOT/target/release/easy-helper" "$STAGE/usr/lib/easy/easy-helper"
 install -Dm755 "$ROOT/packaging/deb/cleanup-network.sh" "$STAGE/usr/lib/easy/cleanup-network.sh"
 install -Dm644 "$ROOT/packaging/deb/easy-helper.service" "$STAGE/usr/lib/systemd/system/easy-helper.service"
+install -Dm644 "$ROOT/packaging/polkit/com.easyconnection.helper.policy" \
+  "$STAGE/usr/share/polkit-1/actions/com.easyconnection.helper.policy"
 
 # Packaged unit must match the installed helper path.
 sed -i 's|^ExecStart=.*|ExecStart=/usr/lib/easy/easy-helper --socket /run/easy/helper.sock --allow-active-sessions|' \

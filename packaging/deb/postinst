@@ -24,4 +24,5 @@ echo "Easy Connection is installed."
 echo "  App menu: search for \"Easy Connection\""
 echo "  CLI:      easy --help"
 echo "  Helper:   systemctl status easy-helper.service"
+echo "  Elevate:  Connect in VPN mode prompts via pkexec (polkit)"
 exit 0

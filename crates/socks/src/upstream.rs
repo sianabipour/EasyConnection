@@ -26,6 +26,7 @@ impl UpstreamConnector for DirectConnector {
         let stream = TcpStream::connect(&addr)
             .await
             .map_err(|e| SocksError::Upstream(format!("connect {addr}: {e}")))?;
+        let _ = stream.set_nodelay(true);
         Ok(Box::new(stream))
     }
 }

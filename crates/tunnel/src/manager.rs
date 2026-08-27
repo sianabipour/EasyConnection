@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use rt_config::{ConnectionConfig, Protocol, RoutingMode, Transport};
+use rt_config::{ConnectionConfig, DnsOverTcp, Protocol, RoutingMode, Transport};
 use rt_secrets::SecretsStore;
 use rt_shadowsocks::ShadowsocksConnector;
 use rt_socks::{ProxyHandles, ProxyServer, Socks5Auth};
@@ -493,6 +493,9 @@ async fn start_full_tunnel(
     profile: &ConnectionConfig,
     upstream: Arc<dyn rt_socks::UpstreamConnector>,
 ) -> Result<StartedTun> {
+    // Auto-elevate via polkit when the helper is not already running (systemd or prior session).
+    rt_tun::ensure_helper_or_tun_error().await?;
+
     let server_ips = resolve_server_ips(&profile.host, profile.port).await?;
     let helper = HelperClient::connect_default().await?;
     let _ = helper.ping().await?;
@@ -533,6 +536,7 @@ async fn start_full_tunnel(
     let dns_via_udpgw = profile.udpgw.transparent_dns && udpgw_ok;
     let udp_port = if udpgw_ok { UDP_PROXY_PORT } else { 0 };
 
+    let dns_over_tcp = profile.dns.dns_over_tcp;
     let stop_tcp = stop.clone();
     let stop_dns = stop.clone();
     let up_tcp = Arc::clone(&upstream);
@@ -549,8 +553,15 @@ async fn start_full_tunnel(
         }
     });
     tokio::spawn(async move {
-        if let Err(e) =
-            run_dns_intercept(dns_sock, up_dns, dns_for_intercept, dns_gw, stop_dns).await
+        if let Err(e) = run_dns_intercept(
+            dns_sock,
+            up_dns,
+            dns_for_intercept,
+            dns_gw,
+            dns_over_tcp,
+            stop_dns,
+        )
+        .await
         {
             warn!(error = %e, "DNS intercept exited");
         }
@@ -589,9 +600,10 @@ async fn start_full_tunnel(
                 } else {
                     None
                 };
+                let dns_otc6 = dns_over_tcp;
                 tokio::spawn(async move {
                     if let Err(e) =
-                        run_dns_intercept(v6dns, up_v6d, servers, dns_gw6, stop_v6d).await
+                        run_dns_intercept(v6dns, up_v6d, servers, dns_gw6, dns_otc6, stop_v6d).await
                     {
                         warn!(error = %e, "IPv6 DNS intercept exited");
                     }
@@ -682,13 +694,21 @@ async fn start_full_tunnel(
         rt_dns::DnsPolicy::Custom if dns_via_udpgw => {
             format!("custom via UDPGW ({})", dns_servers.join(", "))
         }
-        rt_dns::DnsPolicy::Custom => format!("custom ({})", dns_servers.join(", ")),
+        rt_dns::DnsPolicy::Custom => match dns_over_tcp {
+            DnsOverTcp::Off => format!("custom UDP only ({})", dns_servers.join(", ")),
+            _ => format!("custom DNS-over-TCP ({})", dns_servers.join(", ")),
+        },
         rt_dns::DnsPolicy::Remote | rt_dns::DnsPolicy::Tunnel if dns_via_udpgw => {
             format!("tunnel UDPGW DNS ({})", dns_servers.join(", "))
         }
-        rt_dns::DnsPolicy::Remote | rt_dns::DnsPolicy::Tunnel => {
-            format!("tunnel DNS-over-TCP ({})", dns_servers.join(", "))
-        }
+        rt_dns::DnsPolicy::Remote | rt_dns::DnsPolicy::Tunnel => match dns_over_tcp {
+            DnsOverTcp::Off => "tunnel DNS unavailable (dns_over_tcp=off, no UDPGW)".into(),
+            DnsOverTcp::On => format!("tunnel DNS-over-TCP forced ({})", dns_servers.join(", ")),
+            DnsOverTcp::Auto => format!(
+                "tunnel DNS-over-TCP fallback ({})",
+                dns_servers.join(", ")
+            ),
+        },
     };
 
     let udp_note = if udpgw_ok {
@@ -740,10 +760,12 @@ async fn resolve_server_ips(host: &str, port: u16) -> Result<Vec<IpAddr>> {
 fn full_tunnel_error(detail: &str) -> String {
     format!(
         "VPN / full-tunnel mode could not be started.\n\n{detail}\n\nPossible causes:\n\
-         • privileged helper is not running\n\
-         • this user is not allowed to talk to the helper\n\
+         • polkit elevation was denied or cancelled\n\
+         • pkexec / policykit-1 is not installed\n\
+         • privileged helper failed to start\n\
          • /dev/net/tun or nftables is unavailable\n\n\
-         Start the helper:\n  sudo easy-helper --allow-uid $(id -u)\n\
+         The desktop app will prompt for authentication via pkexec when needed.\n\
+         Manual fallback:\n  sudo easy-helper --allow-uid $(id -u)\n\
          or: sudo scripts/install-helper.sh\n\n\
          Proxy-only mode still works without the helper."
     )

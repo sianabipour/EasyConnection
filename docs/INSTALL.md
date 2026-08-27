@@ -18,7 +18,9 @@ sudo apt install ./easy-connection_*_amd64.deb
 - Activities overview → search **Easy Connection**, or
 - terminal: `easy-desktop`
 
-4. Confirm the helper is running (needed for VPN / full tunnel):
+4. For VPN / full tunnel, Connect will start `easy-helper` via polkit (`pkexec`)
+   if it is not already running (systemd unit or a prior session). Approve the
+   system auth dialog when prompted. You can also enable the unit yourself:
 
 ```bash
 systemctl status easy-helper.service

@@ -2,12 +2,14 @@
 
 pub mod client;
 mod device;
+pub mod elevate;
 mod error;
 mod frame;
 pub mod ipc;
 
 pub use client::HelperClient;
 pub use device::{create_named_tun, TunIo};
+pub use elevate::{ensure_helper_or_tun_error, ensure_helper_running, helper_reachable};
 pub use error::TunError;
 pub use frame::{recv_frame, send_frame, RecvFrame};
 pub use ipc::{ApplySpec, HelperRequest, HelperResponse};

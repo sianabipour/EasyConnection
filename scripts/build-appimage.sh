@@ -9,7 +9,7 @@ echo "==> Release CLI + helper (bundled into the desktop package)"
 cargo build -p easy-cli -p easy-helper --release
 
 if [[ ! -f "$ROOT/apps/desktop/src-tauri/icons/32x32.png" ]]; then
-  python3 "$ROOT/scripts/gen-icons.py"
+  python3 "$ROOT/scripts/gen-app-icons.py"
 fi
 
 echo "==> Frontend deps"

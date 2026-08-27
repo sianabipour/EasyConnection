@@ -9,15 +9,19 @@ update-desktop-database ~/.local/share/applications /usr/share/applications
 easy-desktop
 ```
 
-## Helper will not start
+## Helper will not start / elevation denied
 
-Symptoms: `easy connect` with `--routing-mode full_tunnel` fails with helper unavailable.
+Symptoms: Connect with full tunnel fails with helper unavailable, **Elevation denied**,
+or **pkexec is not available**.
 
-1. Confirm the unit: `systemctl status easy-helper.service`
-2. Socket must exist: `ls -l /run/easy/helper.sock`
-3. Override path: `export EASY_HELPER_SOCKET=/run/easy/helper.sock`
-4. Foreground debug: `sudo easy-helper --allow-uid "$(id -u)"`
-5. Missing `/dev/net/tun`: `sudo modprobe tun`
+1. Prefer the packaged path: Connect triggers `pkexec easy-helper --allow-uid <uid>`
+   (polkit action `com.easyconnection.helper.run`). Approve the OS password dialog.
+2. Or use the systemd unit: `systemctl status easy-helper.service`
+3. Socket must exist: `ls -l /run/easy/helper.sock`
+4. Override path: `export EASY_HELPER_SOCKET=/run/easy/helper.sock`
+5. Manual foreground (debug only): `sudo easy-helper --allow-uid "$(id -u)"`
+6. Missing `/dev/net/tun`: `sudo modprobe tun`
+7. Missing polkit: install `policykit-1` / `pkexec`
 
 The helper needs `CAP_NET_ADMIN` (and `CAP_NET_RAW`). The packaged unit grants those via systemd. Running the binary as a normal user cannot create `easy0`.
 

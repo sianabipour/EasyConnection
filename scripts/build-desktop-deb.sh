@@ -5,13 +5,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$HOME/.cargo/env" 2>/dev/null || true
 
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.1}"
 ARCH="${ARCH:-amd64}"
 OUT="$ROOT/packaging/out"
 STAGE="$OUT/easy-connection_${VERSION}_${ARCH}"
 
-echo "==> Icons"
-python3 "$ROOT/scripts/gen-icons.py"
+echo "==> Icons (from apps/desktop/src-tauri/icon.png)"
+python3 "$ROOT/scripts/gen-app-icons.py"
 
 echo "==> Frontend"
 if [[ ! -d "$ROOT/apps/desktop/node_modules" ]]; then
@@ -49,6 +49,7 @@ mkdir -p \
   "$STAGE/usr/lib/systemd/system" \
   "$STAGE/usr/share/applications" \
   "$STAGE/usr/share/metainfo" \
+  "$STAGE/usr/share/polkit-1/actions" \
   "$STAGE/usr/share/icons/hicolor/32x32/apps" \
   "$STAGE/usr/share/icons/hicolor/128x128/apps" \
   "$STAGE/usr/share/icons/hicolor/256x256/apps" \
@@ -63,6 +64,8 @@ install -Dm755 "$ROOT/packaging/deb/cleanup-network.sh" "$STAGE/usr/lib/easy/cle
 install -Dm644 "$ROOT/packaging/deb/easy-helper.service" "$STAGE/usr/lib/systemd/system/easy-helper.service"
 sed -i 's|^ExecStart=.*|ExecStart=/usr/lib/easy/easy-helper --socket /run/easy/helper.sock --allow-active-sessions|' \
   "$STAGE/usr/lib/systemd/system/easy-helper.service"
+install -Dm644 "$ROOT/packaging/polkit/com.easyconnection.helper.policy" \
+  "$STAGE/usr/share/polkit-1/actions/com.easyconnection.helper.policy"
 
 install -Dm644 "$ROOT/packaging/deb/easy-connection.desktop" \
   "$STAGE/usr/share/applications/easy-connection.desktop"
@@ -71,12 +74,20 @@ install -Dm644 "$ROOT/packaging/deb/app.easyconnection.linux.metainfo.xml" \
 
 install -Dm644 "$ICONS/32x32.png" "$STAGE/usr/share/icons/hicolor/32x32/apps/easy-connection.png"
 install -Dm644 "$ICONS/128x128.png" "$STAGE/usr/share/icons/hicolor/128x128/apps/easy-connection.png"
-if [[ -f "$ICONS/henry.w@example.net" ]]; then
-  install -Dm644 "$ICONS/henry.w@example.net" \
+if [[ -f "$ICONS/128x128@2x.png" ]]; then
+  mkdir -p "$STAGE/usr/share/icons/hicolor/256x256/apps"
+  install -Dm644 "$ICONS/128x128@2x.png" \
     "$STAGE/usr/share/icons/hicolor/256x256/apps/easy-connection.png"
-  install -Dm644 "$ICONS/henry.w@example.net" "$STAGE/usr/share/pixmaps/easy-connection.png"
+  install -Dm644 "$ICONS/128x128@2x.png" "$STAGE/usr/share/pixmaps/easy-connection.png"
+elif [[ -f "$ICONS/icon.png" ]]; then
+  install -Dm644 "$ICONS/icon.png" "$STAGE/usr/share/pixmaps/easy-connection.png"
 else
   install -Dm644 "$ICONS/128x128.png" "$STAGE/usr/share/pixmaps/easy-connection.png"
+fi
+# High-res for GNOME scaling
+if [[ -f "$ICONS/icon-1024.png" ]]; then
+  mkdir -p "$STAGE/usr/share/icons/hicolor/512x512/apps"
+  install -Dm644 "$ICONS/icon.png" "$STAGE/usr/share/icons/hicolor/512x512/apps/easy-connection.png"
 fi
 
 install -Dm644 "$ROOT/packaging/deb/copyright" "$STAGE/usr/share/doc/easy-connection/copyright"

@@ -90,14 +90,25 @@ impl SshSession {
             inactivity_timeout: None,
             keepalive_interval: Some(Duration::from_secs(opts.keepalive_secs.max(5))),
             keepalive_max: 5,
+            // Larger window reduces SSH-level stalls on parallel page loads.
+            window_size: 4 * 1024 * 1024,
+            maximum_packet_size: 32768,
             preferred: Preferred::default(),
             ..Default::default()
         };
 
-        let addr = (opts.host.as_str(), opts.port);
         let handler = ClientHandler { verifier };
-        let connect_fut = client::connect(Arc::new(config), addr, handler);
+        // Dial ourselves so we can set TCP_NODELAY on the SSH TCP (russh connect does not).
+        let tcp = timeout(
+            Duration::from_secs(opts.connect_timeout_secs.max(1)),
+            tokio::net::TcpStream::connect((opts.host.as_str(), opts.port)),
+        )
+        .await
+        .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))?
+        .map_err(SshError::from)?;
+        let _ = tcp.set_nodelay(true);
 
+        let connect_fut = client::connect_stream(Arc::new(config), tcp, handler);
         let mut handle = timeout(
             Duration::from_secs(opts.connect_timeout_secs.max(1)),
             connect_fut,
@@ -133,6 +144,8 @@ impl SshSession {
             inactivity_timeout: None,
             keepalive_interval: Some(Duration::from_secs(opts.keepalive_secs.max(5))),
             keepalive_max: 5,
+            window_size: 4 * 1024 * 1024,
+            maximum_packet_size: 32768,
             preferred: Preferred::default(),
             ..Default::default()
         };
@@ -167,12 +180,24 @@ impl SshSession {
     }
 
     pub async fn open_direct_tcpip(&self, host: &str, port: u16) -> Result<ChannelStream<Msg>> {
-        debug!(%host, port, "opening SSH direct-tcpip channel");
-        let channel = self
-            .handle
-            .channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0u32)
-            .await?;
-        Ok(channel.into_stream())
+        use tracing::Instrument;
+        async {
+            let started = std::time::Instant::now();
+            debug!(%host, port, "opening SSH direct-tcpip channel");
+            let channel = self
+                .handle
+                .channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0u32)
+                .await?;
+            debug!(
+                %host,
+                port,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "SSH direct-tcpip channel ready"
+            );
+            Ok(channel.into_stream())
+        }
+        .instrument(tracing::info_span!("ssh_direct_tcpip", %host, port))
+        .await
     }
 
     pub async fn disconnect(&self) -> Result<()> {

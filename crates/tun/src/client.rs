@@ -22,7 +22,7 @@ impl HelperClient {
         let path = path.as_ref().to_path_buf();
         let stream = UnixStream::connect(&path).await.map_err(|e| {
             TunError::HelperUnavailable(format!(
-                "{} ({e}). Start it with: sudo easy-helper --allow-uid $(id -u)",
+                "{} ({e}). Full-tunnel mode will try pkexec, or start manually: sudo easy-helper --allow-uid $(id -u)",
                 path.display()
             ))
         })?;

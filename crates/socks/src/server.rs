@@ -80,11 +80,14 @@ impl ProxyServer {
                         accepted = socks_listener.accept() => {
                             match accepted {
                                 Ok((stream, peer)) => {
+                                    crate::set_nodelay(&stream);
                                     stats.accepted.fetch_add(1, Ordering::Relaxed);
                                     stats.active.fetch_add(1, Ordering::Relaxed);
                                     let upstream = Arc::clone(&upstream);
                                     let stats = Arc::clone(&stats);
                                     let auth = Arc::clone(&auth);
+                                    // Spawn immediately so channel opens run in parallel,
+                                    // not serialized behind other SOCKS handshakes.
                                     tokio::spawn(async move {
                                         if let Err(e) = dispatch_socks(stream, upstream.as_ref(), auth.as_ref()).await {
                                             tracing::debug!(%peer, error = %e, "socks session ended");
@@ -114,6 +117,7 @@ impl ProxyServer {
                         accepted = http_listener.accept() => {
                             match accepted {
                                 Ok((stream, peer)) => {
+                                    crate::set_nodelay(&stream);
                                     stats.accepted.fetch_add(1, Ordering::Relaxed);
                                     stats.active.fetch_add(1, Ordering::Relaxed);
                                     let upstream = Arc::clone(&upstream);

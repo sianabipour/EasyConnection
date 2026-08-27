@@ -1,3 +1,17 @@
+easy-connection (0.1.1) stable; urgency=medium
+
+  * Tunnel latency: TCP_NODELAY on SOCKS/HTTP/transproxy and SSH dial,
+    larger SSH channel window, DNS-over-TCP only as documented fallback,
+    and reuse of DNS-over-TCP streams across lookups.
+  * Full-tunnel Connect elevates easy-helper via polkit/pkexec
+    (com.easyconnection.helper.run); no manual sudo required when policy
+    is installed. Honest elevation-denied / pkexec-missing errors.
+  * Ship and uninstall polkit policy with the .deb; policykit-1 dependency.
+  * App icon regenerated from apps/desktop/src-tauri/icon.png for GNOME
+    hicolor / taskbar (Icon=easy-connection).
+
+ -- Easy Connection Contributors <easy@localhost>  Thu, 27 Aug 2026 14:00:00 +0000
+
 easy-connection (0.1.0) UNRELEASED; urgency=medium
 
   * Desktop package: GUI, CLI, app-menu entry, and background easy-helper.

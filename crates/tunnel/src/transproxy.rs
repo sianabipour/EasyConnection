@@ -3,14 +3,15 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
+use rt_config::DnsOverTcp;
 use rt_dns::{default_dns_servers, exchange_over_tcp};
-use rt_socks::UpstreamConnector;
+use rt_socks::{UpstreamConnector, UpstreamIo};
 use rt_udpgw::UdpgwHandle;
 use tokio::io::{AsyncReadExt, Interest};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, Instrument};
 
 use crate::Result;
 
@@ -36,6 +37,7 @@ pub async fn run_transproxy(
             accepted = listener.accept() => {
                 match accepted {
                     Ok((stream, peer)) => {
+                        let _ = stream.set_nodelay(true);
                         let upstream = Arc::clone(&upstream);
                         tokio::spawn(async move {
                             if let Err(e) = handle_intercepted(stream, upstream.as_ref()).await {
@@ -59,16 +61,24 @@ async fn handle_intercepted(
     upstream: &dyn UpstreamConnector,
 ) -> io::Result<()> {
     let dest = original_dst(&client)?;
-    debug!(%dest, "intercepted TCP → SSH direct-tcpip");
-    match upstream.connect(&dest.ip().to_string(), dest.port()).await {
-        Ok(mut rhs) => {
-            if let Err(e) = tokio::io::copy_bidirectional(&mut client, &mut rhs).await {
-                debug!(%dest, error = %e, "transproxy relay ended");
+    async {
+        let started = std::time::Instant::now();
+        match upstream.connect(&dest.ip().to_string(), dest.port()).await {
+            Ok(mut rhs) => {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "SSH direct-tcpip channel open"
+                );
+                if let Err(e) = tokio::io::copy_bidirectional(&mut client, &mut rhs).await {
+                    debug!(%dest, error = %e, "transproxy relay ended");
+                }
             }
+            Err(e) => debug!(%dest, error = %e, "SSH forward failed"),
         }
-        Err(e) => debug!(%dest, error = %e, "SSH forward failed"),
+        Ok(())
     }
-    Ok(())
+    .instrument(tracing::info_span!("transproxy", %dest))
+    .await
 }
 
 fn original_dst(stream: &TcpStream) -> io::Result<SocketAddr> {
@@ -132,14 +142,18 @@ pub async fn run_dns_intercept(
     upstream: Arc<dyn UpstreamConnector>,
     dns_servers: Vec<String>,
     udpgw: Option<UdpgwHandle>,
+    dns_over_tcp: DnsOverTcp,
     stop: CancellationToken,
 ) -> Result<()> {
     let listen = sock.local_addr().ok();
     let sock = Arc::new(sock);
-    let via = if udpgw.is_some() {
-        "UDPGW then DNS-over-TCP"
-    } else {
-        "DNS-over-TCP"
+    let pool = Arc::new(DnsTcpPool::new());
+    let via = match (udpgw.is_some(), dns_over_tcp) {
+        (true, DnsOverTcp::Off) => "UDPGW only (DNS-over-TCP off)",
+        (true, _) => "UDPGW then DNS-over-TCP fallback",
+        (false, DnsOverTcp::Off) => "no DNS path (UDPGW off, DNS-over-TCP off)",
+        (false, DnsOverTcp::On) => "DNS-over-TCP (forced)",
+        (false, DnsOverTcp::Auto) => "DNS-over-TCP (UDP unavailable)",
     };
     info!(?listen, %via, "transparent DNS intercept listening");
     let mut buf = vec![0u8; 4096];
@@ -154,13 +168,24 @@ pub async fn run_dns_intercept(
                         let servers = dns_servers.clone();
                         let sock = Arc::clone(&sock);
                         let gw = udpgw.clone();
-                        tokio::spawn(async move {
-                            if let Some(resp) =
-                                resolve_dns_query(&query, upstream.as_ref(), &servers, gw.as_ref()).await
-                            {
-                                let _ = sock.send_to(&resp, from).await;
+                        let pool = Arc::clone(&pool);
+                        tokio::spawn(
+                            async move {
+                                if let Some(resp) = resolve_dns_query(
+                                    &query,
+                                    upstream.as_ref(),
+                                    &servers,
+                                    gw.as_ref(),
+                                    dns_over_tcp,
+                                    &pool,
+                                )
+                                .await
+                                {
+                                    let _ = sock.send_to(&resp, from).await;
+                                }
                             }
-                        });
+                            .instrument(tracing::info_span!("dns_resolve")),
+                        );
                     }
                     Err(e) => {
                         warn!(error = %e, "DNS intercept recv failed");
@@ -173,11 +198,83 @@ pub async fn run_dns_intercept(
     Ok(())
 }
 
+/// Reuses one SSH `direct-tcpip` stream to a DNS server across queries so each
+/// lookup does not pay a full channel-open RTT.
+struct DnsTcpPool {
+    inner: Mutex<Option<(String, Box<dyn UpstreamIo>)>>,
+}
+
+impl DnsTcpPool {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(None),
+        }
+    }
+
+    async fn exchange(
+        &self,
+        query: &[u8],
+        upstream: &dyn UpstreamConnector,
+        host: &str,
+    ) -> Option<Vec<u8>> {
+        async {
+            {
+                let mut guard = self.inner.lock().await;
+                if let Some((cached_host, stream)) = guard.as_mut() {
+                    if cached_host == host {
+                        match exchange_over_tcp(query, stream.as_mut()).await {
+                            Ok(resp) => return Some(resp),
+                            Err(e) => {
+                                debug!(
+                                    %host,
+                                    error = %e,
+                                    "reused DNS-over-TCP stream failed; reconnecting"
+                                );
+                                *guard = None;
+                            }
+                        }
+                    } else {
+                        *guard = None;
+                    }
+                }
+            }
+
+            let open = std::time::Instant::now();
+            let mut stream = match upstream.connect(host, 53).await {
+                Ok(s) => s,
+                Err(e) => {
+                    debug!(%host, error = %e, "DNS-over-TCP connect failed");
+                    return None;
+                }
+            };
+            debug!(
+                %host,
+                elapsed_ms = open.elapsed().as_millis() as u64,
+                "DNS-over-TCP channel open"
+            );
+            match exchange_over_tcp(query, stream.as_mut()).await {
+                Ok(resp) => {
+                    *self.inner.lock().await = Some((host.to_string(), stream));
+                    Some(resp)
+                }
+                Err(e) => {
+                    debug!(%host, error = %e, "DNS-over-TCP failed");
+                    None
+                }
+            }
+        }
+        .instrument(tracing::info_span!("dns_over_tcp", %host))
+        .await
+    }
+}
+
 async fn resolve_dns_query(
     query: &[u8],
     upstream: &dyn UpstreamConnector,
     dns_servers: &[String],
     udpgw: Option<&UdpgwHandle>,
+    dns_over_tcp: DnsOverTcp,
+    pool: &DnsTcpPool,
 ) -> Option<Vec<u8>> {
     if let Some(gw) = udpgw {
         let mut servers: Vec<String> = dns_servers.to_vec();
@@ -204,8 +301,15 @@ async fn resolve_dns_query(
                 }
             }
         }
+        if matches!(dns_over_tcp, DnsOverTcp::Off) {
+            return None;
+        }
+    } else if matches!(dns_over_tcp, DnsOverTcp::Off) {
+        debug!("DNS query dropped: UDPGW unavailable and dns_over_tcp=off");
+        return None;
     }
-    dns_over_tcp_query(query, upstream, dns_servers).await
+
+    dns_over_tcp_query(query, upstream, dns_servers, pool).await
 }
 
 pub async fn pump_udpgw_replies(
@@ -376,6 +480,7 @@ async fn dns_over_tcp_query(
     query: &[u8],
     upstream: &dyn UpstreamConnector,
     dns_servers: &[String],
+    pool: &DnsTcpPool,
 ) -> Option<Vec<u8>> {
     let mut servers: Vec<String> = dns_servers.to_vec();
     if servers.is_empty() {
@@ -385,12 +490,8 @@ async fn dns_over_tcp_query(
             .collect();
     }
     for host in servers {
-        match upstream.connect(&host, 53).await {
-            Ok(stream) => match exchange_over_tcp(query, stream).await {
-                Ok(resp) => return Some(resp),
-                Err(e) => debug!(%host, error = %e, "DNS-over-TCP failed"),
-            },
-            Err(e) => debug!(%host, error = %e, "DNS-over-TCP connect failed"),
+        if let Some(resp) = pool.exchange(query, upstream, &host).await {
+            return Some(resp);
         }
     }
     None

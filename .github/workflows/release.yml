@@ -34,22 +34,22 @@ jobs:
             libssl-dev openssl \
             libgtk-3-dev libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev librsvg2-dev patchelf \
-            iproute2 nftables dpkg-dev python3
+            iproute2 nftables dpkg-dev python3 python3-pil
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build desktop .deb
         env:
-          VERSION: 0.1.0.${{ github.run_number }}
+          VERSION: 0.1.1.${{ github.run_number }}
         run: |
-          chmod +x scripts/*.sh scripts/gen-icons.py packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/deb/cleanup-network.sh
+          chmod +x scripts/*.sh scripts/gen-app-icons.py packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/deb/cleanup-network.sh
           ./scripts/build-desktop-deb.sh
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0.${{ github.run_number }}
-          name: Easy Connection 0.1.0 (build ${{ github.run_number }})
+          tag_name: v0.1.1.${{ github.run_number }}
+          name: Easy Connection 0.1.1 (build ${{ github.run_number }})
           generate_release_notes: true
           files: packaging/out/*.deb
           fail_on_unmatched_files: true
@@ -63,6 +63,20 @@ jobs:
             ```
 
             Open **Easy Connection** from the app menu (Activities search).
-            The `easy-helper` background service starts automatically for VPN / full-tunnel mode.
+
+            ### VPN / full tunnel
+
+            Connect prompts for authentication via **polkit** (`pkexec`) when
+            `easy-helper` is not already running. Approve the system dialog.
+            The helper can also run as `easy-helper.service`.
+
+            Proxy-only (local SOCKS) works without elevation.
 
             CLI: `easy --help`
+
+            ### Highlights in 0.1.1
+
+            - Faster page loads through the tunnel (TCP_NODELAY, DNS-over-TCP
+              fallback/reuse, larger SSH window)
+            - Automatic helper elevation via polkit
+            - Updated application icon
