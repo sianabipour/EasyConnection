@@ -704,10 +704,9 @@ async fn start_full_tunnel(
         rt_dns::DnsPolicy::Remote | rt_dns::DnsPolicy::Tunnel => match dns_over_tcp {
             DnsOverTcp::Off => "tunnel DNS unavailable (dns_over_tcp=off, no UDPGW)".into(),
             DnsOverTcp::On => format!("tunnel DNS-over-TCP forced ({})", dns_servers.join(", ")),
-            DnsOverTcp::Auto => format!(
-                "tunnel DNS-over-TCP fallback ({})",
-                dns_servers.join(", ")
-            ),
+            DnsOverTcp::Auto => {
+                format!("tunnel DNS-over-TCP fallback ({})", dns_servers.join(", "))
+            }
         },
     };
 
