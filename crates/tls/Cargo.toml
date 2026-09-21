@@ -7,8 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+openssl = "0.10"
 rt-config = { workspace = true }
 rt-websocket = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-openssl = "0.6"
 tracing = { workspace = true }

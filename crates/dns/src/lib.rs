@@ -1,7 +1,9 @@
-//! DNS-over-TCP fallback and systemd-resolved policy for tunnel mode.
+//! DNS-over-TCP fallback, query helpers, and a short-lived message cache.
 
+mod cache;
 mod policy;
 
+pub use cache::DnsMessageCache;
 pub use policy::{effective_policy, resolve_servers, should_configure_resolved, DnsPolicy};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -52,6 +54,26 @@ pub fn default_dns_servers() -> [&'static str; 2] {
     ["1.1.1.1", "8.8.8.8"]
 }
 
+/// RFC 1035 A-question for `name` (used to pre-warm the DNS-over-TCP path).
+pub fn encode_query_a(name: &str, id: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32 + name.len());
+    out.extend_from_slice(&id.to_be_bytes());
+    out.extend_from_slice(&[0x01, 0x00]); // RD
+    out.extend_from_slice(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    for label in name.trim().trim_end_matches('.').split('.') {
+        if label.is_empty() {
+            continue;
+        }
+        let b = label.as_bytes();
+        let n = b.len().min(63);
+        out.push(n as u8);
+        out.extend_from_slice(&b[..n]);
+    }
+    out.push(0);
+    out.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]); // A IN
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,5 +100,13 @@ mod tests {
         let got = exchange_over_tcp(&query, client).await.unwrap();
         server_task.await.unwrap();
         assert_eq!(got, vec![0x12, 0x34, 0x81, 0x80]);
+    }
+
+    #[test]
+    fn query_a_has_header_and_root() {
+        let q = encode_query_a("example.com", 0xABCD);
+        assert_eq!(&q[0..2], &[0xAB, 0xCD]);
+        assert_eq!(q[12], 7); // "example"
+        assert!(q.ends_with(&[0x00, 0x01, 0x00, 0x01]));
     }
 }

@@ -1,21 +1,28 @@
 //! Transport adapters: Direct, TLS, WebSocket, WSS, HTTP Upgrade.
 //!
-//! TLS uses the system `openssl s_client` so we do not invent a TLS stack and
-//! do not need extra crates. Fingerprint profiles only set conventional ALPN.
-//! rustls/JA3 impersonation is not claimed. Verification stays on unless the
-//! profile sets `verify = false`.
+//! TLS uses the system OpenSSL library in-process (not `openssl s_client`).
+//! Fingerprint profiles only set conventional ALPN. rustls/JA3 impersonation
+//! is not claimed. Verification stays on unless the profile sets `verify = false`.
 
 mod fingerprint;
 mod openssl_pipe;
+mod pool;
+mod tcp;
 
-pub use fingerprint::alpn_for_profile;
+pub use fingerprint::{alpn_for_profile, encode_alpn_wire};
+pub use pool::IdlePool;
+
+use std::sync::LazyLock;
+use std::time::Duration;
 
 use rt_config::{TlsSettings, Transport};
 use rt_websocket::{http_upgrade, websocket_client};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
+use tokio::sync::Semaphore;
 use tracing::warn;
+
+use crate::tcp::connect_tcp;
 
 #[derive(Debug, Error)]
 pub enum TransportError {
@@ -82,12 +89,29 @@ impl DialRequest {
     }
 }
 
+/// Cap concurrent TCP/TLS handshakes so a browser connection burst cannot
+/// exhaust file descriptors (the failure mode of per-flow `s_client` processes).
+static HANDSHAKES: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(64));
+
 /// Open a byte stream to the server using the selected transport.
 pub async fn dial(req: &DialRequest) -> Result<Box<dyn TransportIo>> {
+    let permit = handshake_permit().await?;
+    let stream = dial_unlocked(req).await;
+    drop(permit);
+    stream
+}
+
+async fn handshake_permit() -> Result<tokio::sync::SemaphorePermit<'static>> {
+    tokio::time::timeout(Duration::from_secs(20), HANDSHAKES.acquire())
+        .await
+        .map_err(|_| TransportError::Other("too many concurrent tunnel handshakes".into()))?
+        .map_err(|_| TransportError::Other("tunnel handshake limiter closed".into()))
+}
+
+async fn dial_unlocked(req: &DialRequest) -> Result<Box<dyn TransportIo>> {
     match req.transport {
         Transport::Direct => {
-            let tcp = TcpStream::connect((req.host.as_str(), req.port)).await?;
-            let _ = tcp.set_nodelay(true);
+            let tcp = connect_tcp(&req.host, req.port).await?;
             Ok(Box::new(tcp))
         }
         Transport::Tls => {
@@ -95,8 +119,7 @@ pub async fn dial(req: &DialRequest) -> Result<Box<dyn TransportIo>> {
             Ok(Box::new(tls))
         }
         Transport::WebSocket => {
-            let tcp = TcpStream::connect((req.host.as_str(), req.port)).await?;
-            let _ = tcp.set_nodelay(true);
+            let tcp = connect_tcp(&req.host, req.port).await?;
             let ws = websocket_client(tcp, &req.host_header(), &req.path()).await?;
             Ok(Box::new(ws))
         }
@@ -111,8 +134,7 @@ pub async fn dial(req: &DialRequest) -> Result<Box<dyn TransportIo>> {
                 let upgraded = http_upgrade(tls, &req.host_header(), &req.path()).await?;
                 Ok(Box::new(upgraded))
             } else {
-                let tcp = TcpStream::connect((req.host.as_str(), req.port)).await?;
-                let _ = tcp.set_nodelay(true);
+                let tcp = connect_tcp(&req.host, req.port).await?;
                 let upgraded = http_upgrade(tcp, &req.host_header(), &req.path()).await?;
                 Ok(Box::new(upgraded))
             }

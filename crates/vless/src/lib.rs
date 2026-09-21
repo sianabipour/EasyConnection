@@ -5,11 +5,15 @@ mod header;
 
 pub use header::{encode_request, read_response};
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 use rt_config::{ConnectionConfig, ProtocolSettings};
 use rt_socks::{SocksError, UpstreamConnector, UpstreamIo};
-use rt_tls::{dial, DialRequest};
+use rt_tls::{DialRequest, IdlePool};
 use thiserror::Error;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -24,10 +28,12 @@ pub enum VlessError {
 
 pub type Result<T> = std::result::Result<T, VlessError>;
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
 #[derive(Clone)]
 pub struct VlessConnector {
     uuid: Uuid,
-    dial: DialRequest,
+    pool: Arc<IdlePool>,
 }
 
 impl VlessConnector {
@@ -60,30 +66,46 @@ impl VlessConnector {
         if tls.host.is_none() {
             tls.host = host.clone();
         }
-        Ok(Self {
-            uuid,
-            dial: DialRequest::from_profile(&cfg.host, cfg.port, cfg.transport, tls),
-        })
+        let dial = DialRequest::from_profile(&cfg.host, cfg.port, cfg.transport, tls);
+        // Keep a few warm TLS/TCP sessions so the first filtered-site open
+        // does not wait on a fresh handshake (and we never spawn openssl).
+        let pool = IdlePool::new(dial, 4);
+        Ok(Self { uuid, pool })
+    }
+
+    /// Prefill idle transports in the background after the tunnel is up.
+    pub fn warm_up(&self) {
+        let pool = Arc::clone(&self.pool);
+        tokio::spawn(async move {
+            pool.fill(3).await;
+        });
     }
 }
 
 #[async_trait]
 impl UpstreamConnector for VlessConnector {
     async fn connect(&self, host: &str, port: u16) -> rt_socks::Result<Box<dyn UpstreamIo>> {
-        let mut raw = dial(&self.dial)
-            .await
-            .map_err(|e| SocksError::Upstream(format!("VLESS transport {e}")))?;
-        let req = encode_request(self.uuid, host, port);
-        use tokio::io::AsyncWriteExt;
-        raw.write_all(&req)
-            .await
-            .map_err(|e| SocksError::Upstream(e.to_string()))?;
-        raw.flush()
-            .await
-            .map_err(|e| SocksError::Upstream(e.to_string()))?;
-        read_response(raw.as_mut())
-            .await
-            .map_err(|e| SocksError::Upstream(e.to_string()))?;
-        Ok(Box::new(raw))
+        let pool = Arc::clone(&self.pool);
+        let uuid = self.uuid;
+        let host = host.to_string();
+        tokio::time::timeout(CONNECT_TIMEOUT, async move {
+            let mut raw = pool
+                .take()
+                .await
+                .map_err(|e| SocksError::Upstream(format!("VLESS transport {e}")))?;
+            let req = encode_request(uuid, &host, port);
+            raw.write_all(&req)
+                .await
+                .map_err(|e| SocksError::Upstream(e.to_string()))?;
+            raw.flush()
+                .await
+                .map_err(|e| SocksError::Upstream(e.to_string()))?;
+            read_response(raw.as_mut())
+                .await
+                .map_err(|e| SocksError::Upstream(e.to_string()))?;
+            Ok(Box::new(raw) as Box<dyn UpstreamIo>)
+        })
+        .await
+        .map_err(|_| SocksError::Upstream(format!("VLESS connect to {host}:{port} timed out")))?
     }
 }

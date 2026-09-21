@@ -6,11 +6,13 @@ mod aead;
 pub use addr::encode_socks_addr;
 pub use aead::{evp_bytes_to_key, AeadMethod, SsStream};
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use rt_config::{ConnectionConfig, ProtocolSettings};
 use rt_secrets::SecretsStore;
 use rt_socks::{SocksError, UpstreamConnector, UpstreamIo};
-use rt_tls::{dial, DialRequest};
+use rt_tls::{DialRequest, IdlePool};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -33,7 +35,7 @@ pub struct ShadowsocksConnector {
     server_port: u16,
     method: AeadMethod,
     key: Vec<u8>,
-    dial: DialRequest,
+    pool: Arc<IdlePool>,
 }
 
 impl ShadowsocksConnector {
@@ -53,20 +55,31 @@ impl ShadowsocksConnector {
             }
         };
         let key = aead::evp_bytes_to_key(password.as_bytes(), method.key_len());
+        let dial = DialRequest::from_profile(&cfg.host, cfg.port, cfg.transport, cfg.tls.clone());
+        let pool = IdlePool::new(dial, 4);
         Ok(Self {
             server_host: cfg.host.clone(),
             server_port: cfg.port,
             method,
             key,
-            dial: DialRequest::from_profile(&cfg.host, cfg.port, cfg.transport, cfg.tls.clone()),
+            pool,
         })
+    }
+
+    pub fn warm_up(&self) {
+        let pool = Arc::clone(&self.pool);
+        tokio::spawn(async move {
+            pool.fill(3).await;
+        });
     }
 }
 
 #[async_trait]
 impl UpstreamConnector for ShadowsocksConnector {
     async fn connect(&self, host: &str, port: u16) -> rt_socks::Result<Box<dyn UpstreamIo>> {
-        let raw = dial(&self.dial)
+        let raw = self
+            .pool
+            .take()
             .await
             .map_err(|e| SocksError::Upstream(format!("SS transport {e}")))?;
         let mut ss = SsStream::handshake(raw, self.method, &self.key)
