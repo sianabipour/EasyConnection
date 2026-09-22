@@ -13,15 +13,18 @@ use crate::{Result, TransportError};
 const CACHE_TTL: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 
-static RESOLVE_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Vec<SocketAddr>)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type HostKey = String;
+type CachedAddrs = (Instant, Vec<SocketAddr>);
+type ResolveMap = HashMap<HostKey, CachedAddrs>;
+
+static RESOLVE_CACHE: LazyLock<Mutex<ResolveMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub async fn connect_tcp(host: &str, port: u16) -> Result<TcpStream> {
     let addrs = resolve_cached(host, port).await?;
     let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addrs[..]))
         .await
         .map_err(|_| TransportError::Other(format!("TCP connect to {host}:{port} timed out")))?
-        .map_err(|e| TransportError::Io(e))?;
+        .map_err(TransportError::Io)?;
     let _ = tcp.set_nodelay(true);
     Ok(tcp)
 }
