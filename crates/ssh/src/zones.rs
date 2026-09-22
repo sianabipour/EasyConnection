@@ -99,6 +99,11 @@ impl ZoneProvider for HttpZoneProvider {
             )
             .await
             {
+                Ok(response) if response.body.starts_with(b"SSH-") => {
+                    return Err(SshError::Zones(
+                        "This port speaks SSH, so it has no country list. The phone loads countries with an HTTP request to a smart-config host that has the zone flag, and this profile only has the SSH address.".into(),
+                    ));
+                }
                 Ok(response) if (200..300).contains(&response.status) => {
                     match parse_zone_list(&response.body) {
                         Ok(mut list) => {
@@ -283,17 +288,19 @@ fn zone_attempts(https: Option<bool>) -> Vec<ZoneAttempt> {
             https: false,
             verify: false,
         }],
+        // The phone's zone client writes cleartext HTTP. Try that before TLS so an
+        // OpenSSH banner is recognized immediately instead of waiting out TLS timeouts.
         None => vec![
+            ZoneAttempt {
+                https: false,
+                verify: false,
+            },
             ZoneAttempt {
                 https: true,
                 verify: true,
             },
             ZoneAttempt {
                 https: true,
-                verify: false,
-            },
-            ZoneAttempt {
-                https: false,
                 verify: false,
             },
         ],
@@ -446,6 +453,9 @@ async fn exchange_attempt(
                 ));
             }
             buf.extend_from_slice(&tmp[..n]);
+            if buf.starts_with(b"SSH-") {
+                break;
+            }
             if let Some(header_end) = find_header_end(&buf) {
                 if let Some(len) = content_length(&buf[..header_end]) {
                     if buf.len() >= header_end + 4 + len {

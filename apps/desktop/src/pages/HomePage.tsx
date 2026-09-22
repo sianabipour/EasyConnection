@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useConnection } from "../hooks/useConnection";
 import { api } from "../lib/api";
+import type { Profile, RoutingMode, ZoneInfo } from "../lib/types";
+import { ZonePicker } from "./ZonePicker";
 
 function formatRate(bps: number) {
   if (bps < 1024) return `${bps.toFixed(0)} B/s`;
@@ -16,9 +18,15 @@ function tunnelLabel(snapshot: { routing_mode: string; tun_name?: string | null 
   return "Proxy";
 }
 
-type Panel = "none" | "add" | "import";
+function zoneLabel(profile: Profile): string {
+  if (profile.protocol !== "ssh") return "";
+  if (!profile.selected_zone) return "Auto";
+  const match = profile.zones?.find((z) => z.id === profile.selected_zone);
+  return match?.name || profile.selected_zone;
+}
 
 export function HomePage() {
+  const navigate = useNavigate();
   const {
     snapshot,
     busy,
@@ -30,21 +38,47 @@ export function HomePage() {
     importProfile,
     preferredMode,
     setPreferredMode,
+    refresh,
   } = useConnection();
   const connected = snapshot.state === "connected" || snapshot.state === "degraded";
   const [downHistory, setDownHistory] = useState<number[]>(() => Array(24).fill(0));
   const [upHistory, setUpHistory] = useState<number[]>(() => Array(24).fill(0));
-  const [panel, setPanel] = useState<Panel>("none");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [importErr, setImportErr] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [pingBusy, setPingBusy] = useState<string | null>(null);
   const [pingMsg, setPingMsg] = useState<Record<string, string>>({});
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [zoneFor, setZoneFor] = useState<Profile | null>(null);
+  const [zoneList, setZoneList] = useState<ZoneInfo[]>([]);
+  const [zoneSelected, setZoneSelected] = useState<string | null>(null);
+  const [zoneLoading, setZoneLoading] = useState(false);
+  const [zoneError, setZoneError] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setDownHistory((prev) => [...prev.slice(1), snapshot.stats.rate_down_bps]);
     setUpHistory((prev) => [...prev.slice(1), snapshot.stats.rate_up_bps]);
   }, [snapshot.stats.rate_down_bps, snapshot.stats.rate_up_bps]);
+
+  useEffect(() => {
+    if (selectedId && profiles.some((p) => p.id === selectedId)) return;
+    const active = profiles.find((p) => p.id === snapshot.profile_id);
+    setSelectedId(active?.id || profiles[0]?.id || null);
+  }, [profiles, selectedId, snapshot.profile_id]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointer(event: MouseEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    }
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [menuOpen]);
+
+  const selected = profiles.find((p) => p.id === selectedId) || null;
 
   async function runImport() {
     setImportErr(null);
@@ -52,7 +86,7 @@ export function HomePage() {
     try {
       await importProfile(importText);
       setImportText("");
-      setPanel("none");
+      setImportOpen(false);
     } catch (err) {
       setImportErr(err instanceof Error ? err.message : String(err));
     } finally {
@@ -94,11 +128,89 @@ export function HomePage() {
     }
   }
 
+  async function chooseMode(mode: RoutingMode) {
+    if (mode === preferredMode) return;
+    const reconnectId = connected ? snapshot.profile_id || selectedId : null;
+    await setPreferredMode(mode);
+    if (reconnectId) {
+      await disconnect();
+      await connect(reconnectId);
+    }
+  }
+
+  async function openZones(profile: Profile) {
+    setZoneFor(profile);
+    setZoneList(profile.zones || []);
+    setZoneSelected(profile.selected_zone || null);
+    setZoneError(null);
+    setZoneLoading(true);
+    try {
+      const fresh = await api.fetchZones(profile.id);
+      setZoneList(fresh.zones || []);
+      setZoneSelected(fresh.selected_zone || null);
+      await refresh();
+    } catch (err) {
+      setZoneError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setZoneLoading(false);
+    }
+  }
+
+  async function pickZone(zoneId: string | null) {
+    if (!zoneFor) return;
+    setZoneSelected(zoneId);
+    try {
+      const fresh = await api.setSelectedZone(zoneFor.id, zoneId);
+      setZoneSelected(fresh.selected_zone || null);
+      setZoneList(fresh.zones || zoneList);
+      await refresh();
+    } catch (err) {
+      setZoneError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6 pt-2">
-      <div className="text-center">
-        <h1 className="text-4xl font-semibold tracking-tight text-white md:text-5xl">Easy Connection</h1>
-        <p className="mt-2 text-[var(--color-muted)]">Native Linux tunnel &amp; proxy client</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-center sm:text-left">
+          <h1 className="text-4xl font-semibold tracking-tight text-white md:text-5xl">Easy Connection</h1>
+          <p className="mt-2 text-[var(--color-muted)]">Native Linux tunnel &amp; proxy client</p>
+        </div>
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            aria-label="More"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--color-line)] text-lg tracking-widest text-[var(--color-muted)] hover:text-white"
+          >
+            ···
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 z-20 mt-2 w-48 overflow-hidden rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] py-1 shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+              <button
+                type="button"
+                className="block w-full px-4 py-2.5 text-left text-sm text-white hover:bg-[var(--color-panel-2)]"
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate("/add");
+                }}
+              >
+                Add connection
+              </button>
+              <button
+                type="button"
+                className="block w-full px-4 py-2.5 text-left text-sm text-white hover:bg-[var(--color-panel-2)]"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setImportOpen((open) => !open);
+                }}
+              >
+                Import
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-[var(--color-line)] bg-[color:rgb(18_26_36_/_0.9)] px-6 py-8 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
@@ -119,32 +231,34 @@ export function HomePage() {
         </div>
 
         <div className="mt-3 text-center text-lg text-[var(--color-muted)]">
-          {snapshot.profile_name || snapshot.server_label || "No active profile"}
+          {snapshot.profile_name || selected?.name || snapshot.server_label || "No active profile"}
           {snapshot.latency_ms != null ? ` — ${snapshot.latency_ms} ms` : ""}
         </div>
 
         <div className="mt-6 flex justify-center gap-2">
           <ModeChip
             active={preferredMode === "proxy_only"}
-            disabled={connected || busy}
+            disabled={busy}
             label="Proxy"
-            onClick={() => void setPreferredMode("proxy_only")}
+            onClick={() => void chooseMode("proxy_only")}
           />
           <ModeChip
             active={preferredMode === "full_tunnel"}
-            disabled={connected || busy}
+            disabled={busy}
             label="VPN / Tunnel"
-            onClick={() => void setPreferredMode("full_tunnel")}
+            onClick={() => void chooseMode("full_tunnel")}
           />
           <ModeChip
             active={preferredMode === "split_tunnel"}
-            disabled={connected || busy}
+            disabled={busy}
             label="Split"
-            onClick={() => void setPreferredMode("split_tunnel")}
+            onClick={() => void chooseMode("split_tunnel")}
           />
         </div>
         <p className="mt-2 text-center text-[11px] text-[var(--color-muted)]">
-          Mode is chosen here for the next Connect — not stored in imported configs.
+          {connected
+            ? "Switching Proxy or Tunnel reconnects immediately with that mode."
+            : "Proxy and Tunnel apply on the next Connect."}
         </p>
 
         <div className="mt-6 flex justify-center">
@@ -158,9 +272,21 @@ export function HomePage() {
               Disconnect
             </button>
           ) : (
-            <p className="text-sm text-[var(--color-muted)]">Pick a config below to connect</p>
+            <button
+              type="button"
+              disabled={busy || !selected}
+              onClick={() => selected && void connect(selected.id)}
+              className="rounded-lg bg-[var(--color-accent)] px-10 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink)] transition hover:brightness-110 disabled:opacity-40"
+            >
+              {busy ? "Connecting…" : "Connect"}
+            </button>
           )}
         </div>
+        {!connected && (
+          <p className="mt-3 text-center text-xs text-[var(--color-muted)]">
+            {selected ? `Selected: ${selected.name}` : "Select a config below"}
+          </p>
+        )}
 
         <div className="mt-6">
           <Sparkline down={downHistory} up={upHistory} />
@@ -198,30 +324,7 @@ export function HomePage() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => setPanel((p) => (p === "add" ? "none" : "add"))}
-          className="rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-semibold text-[var(--color-ink)]"
-        >
-          {panel === "add" ? "Hide add form" : "Add connection"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setPanel((p) => (p === "import" ? "none" : "import"))}
-          className="rounded-lg border border-[var(--color-line)] px-4 py-2 text-sm text-[var(--color-muted)] hover:text-white"
-        >
-          {panel === "import" ? "Hide import" : "Import config"}
-        </button>
-        <Link
-          to="/add"
-          className="rounded-lg border border-[var(--color-line)] px-4 py-2 text-sm text-[var(--color-muted)] hover:text-white"
-        >
-          Full add page
-        </Link>
-      </div>
-
-      {panel === "import" && (
+      {importOpen && (
         <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
           <p className="text-sm font-medium text-white">Import</p>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
@@ -256,22 +359,13 @@ export function HomePage() {
         </div>
       )}
 
-      {panel === "add" && (
-        <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4 text-sm text-[var(--color-muted)]">
-          Use the full form for SSH / Shadowsocks / VLESS details.{" "}
-          <Link to="/add" className="text-[var(--color-accent)] underline">
-            Open Add Connection
-          </Link>
-        </div>
-      )}
-
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-[var(--color-muted)]">
           Configs
         </h2>
         {profiles.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[var(--color-line)] px-6 py-10 text-center text-[var(--color-muted)]">
-            No profiles yet — add or import one.
+            No profiles yet. Use the menu above to add or import one.
           </div>
         ) : (
           <ul className="space-y-3">
@@ -279,52 +373,82 @@ export function HomePage() {
               const active =
                 snapshot.profile_id === p.id &&
                 (snapshot.state === "connected" || snapshot.state === "degraded");
+              const picked = selectedId === p.id;
+              const country = zoneLabel(p);
               return (
-                <li
-                  key={p.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] px-4 py-4"
-                >
-                  <div className="min-w-0 text-left">
-                    <div className="font-medium text-white">{p.name}</div>
-                    <div className="mt-1 font-mono text-xs text-[var(--color-muted)]">
-                      {p.protocol}+{p.transport}://
-                      {p.protocol === "ssh" && p.username ? `${p.username}@` : ""}
-                      {p.host}:{p.port}
+                <li key={p.id}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedId(p.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setSelectedId(p.id);
+                    }}
+                    className={[
+                      "w-full cursor-pointer rounded-2xl border px-4 py-4 text-left transition",
+                      picked
+                        ? "border-[var(--color-accent)] bg-[color:rgb(94_234_212_/_0.08)] shadow-[0_0_0_1px_rgba(94,234,212,0.35)]"
+                        : "border-[var(--color-line)] bg-[var(--color-panel)] hover:border-[color:rgb(255_255_255_/_0.18)]",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={[
+                              "h-2.5 w-2.5 shrink-0 rounded-full",
+                              active ? "bg-[var(--color-ok)]" : "bg-[var(--color-line)]",
+                            ].join(" ")}
+                          />
+                          <span className="truncate font-medium text-white">{p.name}</span>
+                        </div>
+                        <div className="mt-1 truncate font-mono text-xs text-[var(--color-muted)]">
+                          {p.protocol}+{p.transport}://
+                          {p.protocol === "ssh" && p.username ? `${p.username}@` : ""}
+                          {p.host}:{p.port}
+                        </div>
+                        {p.protocol === "ssh" && (
+                          <div className="mt-2 inline-flex items-center rounded-full border border-[var(--color-line)] px-2 py-0.5 text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
+                            Zone {country}
+                          </div>
+                        )}
+                        {pingMsg[p.id] && (
+                          <div className="mt-1 text-xs text-[var(--color-accent)]">{pingMsg[p.id]}</div>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                        {p.protocol === "ssh" && (
+                          <button
+                            type="button"
+                            onClick={() => void openZones(p)}
+                            className="rounded-md bg-[var(--color-panel-2)] px-3 py-1.5 text-sm text-white hover:brightness-125"
+                          >
+                            Change zone
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={pingBusy === p.id}
+                          onClick={() => void pingProfile(p.id, p.host, p.port)}
+                          className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white disabled:opacity-40"
+                        >
+                          {pingBusy === p.id ? "Pinging…" : "Ping"}
+                        </button>
+                        <Link
+                          to={`/servers/${p.id}/edit`}
+                          className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
+                        >
+                          Edit
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => void remove(p.id)}
+                          className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                    {pingMsg[p.id] && (
-                      <div className="mt-1 text-xs text-[var(--color-accent)]">{pingMsg[p.id]}</div>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busy || active}
-                      onClick={() => void connect(p.id)}
-                      className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] disabled:opacity-40"
-                    >
-                      {active ? "Connected" : "Connect"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={pingBusy === p.id}
-                      onClick={() => void pingProfile(p.id, p.host, p.port)}
-                      className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white disabled:opacity-40"
-                    >
-                      {pingBusy === p.id ? "Pinging…" : "Ping"}
-                    </button>
-                    <Link
-                      to={`/servers/${p.id}/edit`}
-                      className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
-                    >
-                      Edit
-                    </Link>
-                    <button
-                      type="button"
-                      onClick={() => void remove(p.id)}
-                      className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
-                    >
-                      Delete
-                    </button>
                   </div>
                 </li>
               );
@@ -332,6 +456,40 @@ export function HomePage() {
           </ul>
         )}
       </div>
+
+      {zoneFor && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setZoneFor(null)}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-2xl border border-[var(--color-line)] bg-[var(--color-ink)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-base font-medium text-white">Change zone</p>
+                <p className="text-xs text-[var(--color-muted)]">{zoneFor.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setZoneFor(null)}
+                className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <ZonePicker
+              zones={zoneList}
+              selectedId={zoneSelected}
+              loading={zoneLoading}
+              error={zoneError}
+              onReload={() => void openZones(zoneFor)}
+              onSelect={(id) => void pickZone(id)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -399,4 +557,3 @@ function Stat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
