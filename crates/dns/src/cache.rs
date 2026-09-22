@@ -9,8 +9,12 @@ use parking_lot::Mutex;
 const DEFAULT_TTL: Duration = Duration::from_secs(45);
 const MAX_ENTRIES: usize = 512;
 
+type QueryKey = Vec<u8>;
+type CachedMessage = (Instant, Vec<u8>);
+type CacheMap = HashMap<QueryKey, CachedMessage>;
+
 pub struct DnsMessageCache {
-    inner: Mutex<HashMap<Vec<u8>, (Instant, Vec<u8>)>>,
+    inner: Mutex<CacheMap>,
 }
 
 impl DnsMessageCache {
