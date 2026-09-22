@@ -5,6 +5,7 @@
 //! `X-Zone-Id` header on the entry host's smart-config HTTP GET.
 //! The SSH username is not rewritten. See `docs/ZONES.md`.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -77,6 +78,9 @@ pub struct HttpZoneProvider;
 #[async_trait]
 impl ZoneProvider for HttpZoneProvider {
     async fn fetch_zones(&self, req: ZoneFetchRequest) -> Result<ZoneList> {
+        if tcp_speaks_ssh(&req.host, req.port).await {
+            return zones_from_ssh_banner(&req).await;
+        }
         let body = zone_command_body(&req.username, &req.password);
         let mut errors = Vec::new();
         for attempt in zone_attempts(None) {
@@ -305,6 +309,162 @@ fn zone_attempts(https: Option<bool>) -> Vec<ZoneAttempt> {
             },
         ],
     }
+}
+
+async fn tcp_speaks_ssh(host: &str, port: u16) -> bool {
+    let Ok(Ok(mut stream)) =
+        timeout(Duration::from_secs(5), TcpStream::connect((host, port))).await
+    else {
+        return false;
+    };
+    let mut buf = [0u8; 8];
+    match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n >= 4 => buf.starts_with(b"SSH-"),
+        _ => false,
+    }
+}
+
+/// This entry is OpenSSH. The location is the post-login banner
+/// (`Welcome to AT1 🇦🇹 Austria`), not the smart-config HTTP zone command.
+async fn zones_from_ssh_banner(req: &ZoneFetchRequest) -> Result<ZoneList> {
+    let banner = read_auth_banner(req).await?;
+    let zones = zones_from_welcome(&banner);
+    if zones.is_empty() {
+        return Err(SshError::Zones(
+            "SSH login worked, but the server did not name a location.".into(),
+        ));
+    }
+    Ok(ZoneList {
+        hash: None,
+        zones,
+        https: false,
+    })
+}
+
+async fn read_auth_banner(req: &ZoneFetchRequest) -> Result<String> {
+    struct BannerHandler {
+        banner: Arc<std::sync::Mutex<String>>,
+    }
+
+    impl russh::client::Handler for BannerHandler {
+        type Error = SshError;
+
+        async fn check_server_key(
+            &mut self,
+            _server_public_key: &russh::keys::PublicKey,
+        ) -> std::result::Result<bool, Self::Error> {
+            Ok(true)
+        }
+
+        async fn auth_banner(
+            &mut self,
+            banner: &str,
+            _session: &mut russh::client::Session,
+        ) -> std::result::Result<(), Self::Error> {
+            let mut slot = self.banner.lock().unwrap_or_else(|err| err.into_inner());
+            slot.push_str(banner);
+            if !banner.ends_with('\n') {
+                slot.push('\n');
+            }
+            Ok(())
+        }
+    }
+
+    let slot = Arc::new(std::sync::Mutex::new(String::new()));
+    let config = russh::client::Config {
+        inactivity_timeout: Some(Duration::from_secs(8)),
+        ..Default::default()
+    };
+    let handler = BannerHandler {
+        banner: Arc::clone(&slot),
+    };
+    let mut handle = timeout(
+        Duration::from_secs(12),
+        russh::client::connect(Arc::new(config), (req.host.as_str(), req.port), handler),
+    )
+    .await
+    .map_err(|_| SshError::Zones("SSH login timed out while reading the location.".into()))?
+    .map_err(|err| {
+        SshError::Zones(format!(
+            "SSH login failed while reading the location. ({err})"
+        ))
+    })?;
+    let auth = handle
+        .authenticate_password(&req.username, req.password.as_str())
+        .await
+        .map_err(|err| {
+            SshError::Zones(format!(
+                "SSH login failed while reading the location. ({err})"
+            ))
+        })?;
+    if !auth.success() {
+        return Err(SshError::Zones(
+            "SSH login failed while reading the location.".into(),
+        ));
+    }
+    // The location line can arrive in a second banner packet just after auth.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let _ = handle
+        .disconnect(russh::Disconnect::ByApplication, "", "en")
+        .await;
+    let banner = slot.lock().unwrap_or_else(|err| err.into_inner()).clone();
+    Ok(banner)
+}
+
+pub fn zones_from_welcome(text: &str) -> Vec<ZoneInfo> {
+    let mut zones = Vec::new();
+    for line in text.lines() {
+        let Some(rest) = line.trim().strip_prefix("Welcome to ") else {
+            continue;
+        };
+        let mut parts = rest.split_whitespace();
+        let Some(id) = parts.next() else {
+            continue;
+        };
+        let second = parts.next();
+        let (iso, name) = match second {
+            Some(token) if iso_from_flag(token).is_some() => {
+                let name = parts.collect::<Vec<_>>().join(" ");
+                (iso_from_flag(token), name)
+            }
+            Some(token) => {
+                let mut words = vec![token.to_string()];
+                words.extend(parts.map(str::to_string));
+                (None, words.join(" "))
+            }
+            None => (None, String::new()),
+        };
+        let iso = iso.or_else(|| id.get(..2).and_then(iso_if_code));
+        let name = if name.is_empty() {
+            id.to_string()
+        } else {
+            name
+        };
+        if !zones.iter().any(|z: &ZoneInfo| z.id == id) {
+            zones.push(ZoneInfo {
+                id: id.to_string(),
+                name,
+                iso,
+            });
+        }
+    }
+    zones
+}
+
+fn iso_from_flag(token: &str) -> Option<String> {
+    let chars: Vec<char> = token.chars().collect();
+    if chars.len() != 2 {
+        return None;
+    }
+    let mut iso = String::new();
+    for ch in chars {
+        let code = ch as u32;
+        if !(0x1F1E6..=0x1F1FF).contains(&code) {
+            return None;
+        }
+        iso.push(char::from_u32(u32::from(b'A') + (code - 0x1F1E6))?);
+    }
+    Some(iso)
 }
 
 pub fn parse_zone_list(body: &[u8]) -> Result<ZoneList> {
@@ -671,6 +831,15 @@ mod tests {
     fn missing_zones_is_an_error() {
         let err = parse_zone_list(br#"{"hash":"x","ok":true}"#).unwrap_err();
         assert!(err.to_string().contains("Invalid response: no zones"));
+    }
+
+    #[test]
+    fn welcome_banner_is_the_current_location() {
+        let zones = zones_from_welcome("Welcome to AT1 🇦🇹 Austria\nاتصال‌های فعال: ۱\n");
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].id, "AT1");
+        assert_eq!(zones[0].name, "Austria");
+        assert_eq!(zones[0].iso.as_deref(), Some("AT"));
     }
 
     #[test]
