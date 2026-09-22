@@ -69,11 +69,19 @@ export type Profile = {
   vless_flow?: string | null;
   split_bypass_cidrs?: string[];
   split_bypass_domains?: string[];
+  selected_zone?: string | null;
+  zones?: ZoneInfo[];
   proxy: {
     socks_port: number;
     http_proxy_port: number;
     listen: string;
   };
+};
+
+export type ZoneInfo = {
+  id: string;
+  name: string;
+  iso?: string | null;
 };
 
 export type RoutingMode = "proxy_only" | "full_tunnel" | "split_tunnel";

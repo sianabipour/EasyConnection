@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use zeroize::Zeroizing;
 
 use crate::host_key::HostKeyVerifier;
-use crate::{Result, SshError};
+use crate::{HttpZoneProvider, Result, SshError, ZoneProvider};
 
 struct ClientHandler {
     verifier: HostKeyVerifier,
@@ -42,6 +42,8 @@ pub struct SshConnectOptions {
     pub connect_timeout_secs: u64,
     pub host_key_policy: HostKeyPolicy,
     pub known_hosts_path: Option<PathBuf>,
+    /// Exit zone id. None is Auto / best and does not send `X-Zone-Id`.
+    pub zone_id: Option<String>,
 }
 
 impl SshConnectOptions {
@@ -58,6 +60,10 @@ impl SshConnectOptions {
             .username
             .clone()
             .ok_or_else(|| SshError::Config("SSH username required".into()))?;
+        let username = crate::ssh_username_for_zone(
+            &username,
+            cfg.selected_zone.as_deref(),
+        );
         Ok(Self {
             host: cfg.host.clone(),
             port: cfg.port,
@@ -67,6 +73,11 @@ impl SshConnectOptions {
             connect_timeout_secs,
             host_key_policy,
             known_hosts_path: None,
+            zone_id: cfg
+                .selected_zone
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         })
     }
 }
@@ -79,6 +90,7 @@ pub struct SshSession {
 
 impl SshSession {
     pub async fn connect(opts: SshConnectOptions, secrets: &SecretsStore) -> Result<Self> {
+        signal_zone_if_selected(&opts).await;
         let known_hosts = opts.known_hosts_path.unwrap_or_else(default_known_hosts);
         let verifier = HostKeyVerifier::new(
             opts.host.clone(),
@@ -133,6 +145,7 @@ impl SshSession {
         secrets: &SecretsStore,
         stream: Box<dyn rt_tls::TransportIo>,
     ) -> Result<Self> {
+        signal_zone_if_selected(&opts).await;
         let known_hosts = opts.known_hosts_path.unwrap_or_else(default_known_hosts);
         let verifier = HostKeyVerifier::new(
             opts.host.clone(),
@@ -222,6 +235,25 @@ impl UpstreamConnector for SshUpstream {
             .await
             .map_err(|e| SocksError::Upstream(e.to_string()))?;
         Ok(Box::new(stream))
+    }
+}
+
+async fn signal_zone_if_selected(opts: &SshConnectOptions) {
+    let Some(zone_id) = opts.zone_id.as_deref() else {
+        return;
+    };
+    let provider = HttpZoneProvider;
+    if let Err(err) = provider
+        .signal_selected_zone(&opts.host, opts.port, zone_id)
+        .await
+    {
+        tracing::warn!(
+            host = %opts.host,
+            port = opts.port,
+            zone_id,
+            error = %err,
+            "could not signal selected zone; SSH connect continues"
+        );
     }
 }
 

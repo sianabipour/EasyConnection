@@ -107,6 +107,7 @@ Work is incremental. Each phase must compile, test, and document before the next
 | Protocol | Phase | Status |
 |----------|-------|--------|
 | SSH + SOCKS5 | 2 | Implemented |
+| SSH-direct exit zones | — | Implemented (JSON `command: zone` + `X-Zone-Id`; encrypted smart-config blob not implemented) |
 | SSH + TUN TCP | 3 | Implemented |
 | UDPGW | 5 | Implemented (SSH-only) |
 | Shadowsocks AEAD TCP | 6 | Implemented (`aes-128-gcm` / `aes-256-gcm`) |

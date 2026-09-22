@@ -27,7 +27,14 @@ Full-tunnel TCP uses a userspace stack on `easy0` and SSH `direct-tcpip`. It doe
 
 UDP: not native to SSH. DNS/53 is carried with DNS-over-TCP (Phase 3) and optionally UDPGW (Phase 5). Arbitrary UDP uses a BadVPN UDPGW client when the remote runs a compatible daemon.
 
-**Proprietary compatibility:** Not implemented (no proprietary SSH dialect).  
+**Exit zones:** optional. A zone-capable entry host answers `POST /` with
+`{"command":"zone","username","password"}` and a JSON `zones` array. The chosen
+id is sent as `X-Zone-Id` on a `User-Agent: smart_config/1.0` GET before SSH.
+The SSH username is not rewritten. Plain OpenSSH has no zone list and connects
+as before. The encrypted smart-config blob is not implemented. See `docs/ZONES.md`.
+
+**Proprietary compatibility:** Zone list + `X-Zone-Id` only. Encrypted smart-config
+blobs are not implemented.  
 **Standards-compatible implementation:** Implemented (Phase 2+).
 
 Host-key verification is mandatory by default.

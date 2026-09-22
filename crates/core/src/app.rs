@@ -4,11 +4,12 @@ use rt_config::{
     validate_connection, AppSettings, AuthMethod, ConfigStore, ConnectionConfig, ExportDocument,
 };
 use rt_secrets::{SecretRef, SecretsStore};
+use rt_ssh::ZoneProvider;
 use rt_tunnel::{ConnectionManager, ConnectionSnapshot};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::Result;
+use crate::{CoreError, Result};
 
 pub struct AppController {
     pub store: ConfigStore,
@@ -122,6 +123,68 @@ impl AppController {
         cfg.authentication = AuthMethod::Password {
             secret: Some(reference),
         };
+        cfg.updated_at = chrono::Utc::now();
+        self.store.upsert_profile(&cfg)?;
+        Ok(cfg)
+    }
+
+    /// Load exit zones from the SSH entry host and cache them on the profile.
+    pub async fn fetch_zones(&self, id: Uuid) -> Result<rt_config::ZonesCache> {
+        let mut cfg = self.store.get_profile(id)?;
+        if cfg.protocol != rt_config::Protocol::Ssh {
+            return Err(CoreError::Other(
+                "zones are only available for SSH profiles".into(),
+            ));
+        }
+        let username = cfg
+            .username
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| CoreError::Other("SSH username required to load zones".into()))?;
+        let password = match &cfg.authentication {
+            AuthMethod::Password { secret: Some(secret) } => self.secrets.get_secret(secret)?,
+            _ => {
+                return Err(CoreError::Other(
+                    "SSH password required to load zones".into(),
+                ))
+            }
+        };
+        let list = rt_ssh::HttpZoneProvider
+            .fetch_zones(rt_ssh::ZoneFetchRequest::new(
+                cfg.host.clone(),
+                cfg.port,
+                username,
+                password.as_str(),
+            ))
+            .await
+            .map_err(|e| CoreError::Other(e.to_string()))?;
+        let cache = rt_config::ZonesCache {
+            hash: list.hash,
+            zones: list.zones,
+            fetched_at: chrono::Utc::now(),
+        };
+        if let Some(selected) = cfg.selected_zone.clone() {
+            if !cache.zones.iter().any(|z| z.id == selected) {
+                cfg.selected_zone = None;
+            }
+        }
+        cfg.zones_cache = Some(cache.clone());
+        cfg.updated_at = chrono::Utc::now();
+        self.store.upsert_profile(&cfg)?;
+        Ok(cache)
+    }
+
+    /// Persist the chosen zone id. `None` or blank is Auto / best.
+    pub fn set_selected_zone(&self, id: Uuid, zone_id: Option<String>) -> Result<ConnectionConfig> {
+        let mut cfg = self.store.get_profile(id)?;
+        if cfg.protocol != rt_config::Protocol::Ssh {
+            return Err(CoreError::Other(
+                "zones are only available for SSH profiles".into(),
+            ));
+        }
+        cfg.selected_zone = zone_id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         cfg.updated_at = chrono::Utc::now();
         self.store.upsert_profile(&cfg)?;
         Ok(cfg)

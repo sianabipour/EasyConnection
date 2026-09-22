@@ -108,6 +108,12 @@ export function ServersPage() {
                     {p.protocol}+{p.transport}://
                     {p.protocol === "ssh" && p.username ? `${p.username}@` : ""}
                     {p.host}:{p.port} · {p.routing_mode.replaceAll("_", " ")}
+                    {p.protocol === "ssh" &&
+                      (p.selected_zone
+                        ? ` · zone ${p.zones?.find((z) => z.id === p.selected_zone)?.name || p.selected_zone}`
+                        : p.zones && p.zones.length > 0
+                          ? " · zone auto"
+                          : "")}
                   </div>
                 </div>
                 <div className="flex gap-2">

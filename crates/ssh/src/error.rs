@@ -44,6 +44,9 @@ pub enum SshError {
     Config(String),
 
     #[error("{0}")]
+    Zones(String),
+
+    #[error("{0}")]
     Russh(String),
 }
 

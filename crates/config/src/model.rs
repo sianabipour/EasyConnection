@@ -206,6 +206,25 @@ fn default_true() -> bool {
     true
 }
 
+/// One exit country/zone returned by an SSH-direct entry host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneInfo {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub iso: Option<String>,
+}
+
+/// Cached zone list for one profile. No credentials.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZonesCache {
+    #[serde(default)]
+    pub hash: Option<String>,
+    pub zones: Vec<ZoneInfo>,
+    pub fetched_at: DateTime<Utc>,
+}
+
 impl Default for TlsSettings {
     fn default() -> Self {
         Self {
@@ -296,6 +315,12 @@ pub struct ConnectionConfig {
     /// Domains resolved at connect time and added to split bypass.
     #[serde(default)]
     pub split_bypass_domains: Vec<String>,
+    /// Exit zone id. Absent means Auto / best (do not send `X-Zone-Id`).
+    #[serde(default)]
+    pub selected_zone: Option<String>,
+    /// Last successful zone list for this entry host. Empty on plain OpenSSH.
+    #[serde(default)]
+    pub zones_cache: Option<ZonesCache>,
     #[serde(default)]
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -332,6 +357,8 @@ impl ConnectionConfig {
             kill_switch: false,
             split_bypass_cidrs: Vec::new(),
             split_bypass_domains: Vec::new(),
+            selected_zone: None,
+            zones_cache: None,
             notes: None,
             created_at: now,
             updated_at: now,
@@ -370,6 +397,8 @@ impl ConnectionConfig {
             kill_switch: false,
             split_bypass_cidrs: Vec::new(),
             split_bypass_domains: Vec::new(),
+            selected_zone: None,
+            zones_cache: None,
             notes: None,
             created_at: now,
             updated_at: now,
@@ -412,6 +441,8 @@ impl ConnectionConfig {
             kill_switch: false,
             split_bypass_cidrs: Vec::new(),
             split_bypass_domains: Vec::new(),
+            selected_zone: None,
+            zones_cache: None,
             notes: None,
             created_at: now,
             updated_at: now,

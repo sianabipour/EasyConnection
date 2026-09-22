@@ -114,6 +114,8 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
         split_bypass_domains: p.split_bypass_domains
           ? p.split_bypass_domains.split(/[,\s]+/).filter(Boolean)
           : [],
+        selected_zone: null,
+        zones: [],
         proxy: {
           socks_port: p.socks_port,
           http_proxy_port: p.http_port,
@@ -229,6 +231,19 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
         log_level: "info",
         preferred_routing_mode: String(args?.mode || "proxy_only"),
       } as T;
+    case "fetch_zones": {
+      const found = mockProfiles.find((p) => p.id === args?.id);
+      if (!found) throw new Error("Could not load zones. Check connection and try again.");
+      return { ...found, zones: found.zones || [] } as T;
+    }
+    case "set_selected_zone": {
+      mockProfiles = mockProfiles.map((p) =>
+        p.id === args?.id ? { ...p, selected_zone: (args?.zone_id as string) || null } : p,
+      );
+      const found = mockProfiles.find((p) => p.id === args?.id);
+      if (!found) throw new Error("profile not found");
+      return found as T;
+    }
     case "tcp_probe":
     case "traceroute":
       return {
@@ -252,6 +267,9 @@ export const api = {
   getProfile: (id: string) => call<Profile>("get_profile", { id }),
   updateProfile: (input: UpdateProfile) => call<Profile>("update_ssh_profile", { ...input }),
   deleteProfile: (id: string) => call<void>("delete_profile", { id }),
+  fetchZones: (id: string) => call<Profile>("fetch_zones", { id }),
+  setSelectedZone: (id: string, zoneId: string | null) =>
+    call<Profile>("set_selected_zone", { id, zone_id: zoneId }),
   connect: (id: string) => call<ConnectionSnapshot>("connect_profile", { id }),
   disconnect: () => call<ConnectionSnapshot>("disconnect"),
   status: () => call<ConnectionSnapshot>("connection_status"),

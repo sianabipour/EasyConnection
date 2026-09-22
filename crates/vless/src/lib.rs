@@ -88,6 +88,7 @@ impl UpstreamConnector for VlessConnector {
         let pool = Arc::clone(&self.pool);
         let uuid = self.uuid;
         let host = host.to_string();
+        let timeout_host = host.clone();
         tokio::time::timeout(CONNECT_TIMEOUT, async move {
             let mut raw = pool
                 .take()
@@ -106,6 +107,6 @@ impl UpstreamConnector for VlessConnector {
             Ok(Box::new(raw) as Box<dyn UpstreamIo>)
         })
         .await
-        .map_err(|_| SocksError::Upstream(format!("VLESS connect to {host}:{port} timed out")))?
+        .map_err(|_| SocksError::Upstream(format!("VLESS connect to {timeout_host}:{port} timed out")))?
     }
 }

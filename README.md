@@ -43,7 +43,8 @@ Headless CLI + helper only: `./scripts/build-deb.sh`.
 
 ```bash
 easy add-ssh --name demo --host YOUR_HOST --username YOU --password '…'
-easy connect <profile-uuid>
+easy fetch-zones <profile-uuid>
+easy connect <profile-uuid> --zone auto
 curl -x socks5h://127.0.0.1:1080 https://ifconfig.me
 ```
 
@@ -51,6 +52,8 @@ curl -x socks5h://127.0.0.1:1080 https://ifconfig.me
 easy add-ss --name ss --host YOUR_HOST --port 8388 --method aes-256-gcm --password '…'
 easy add-vless --name vless --host YOUR_HOST --port 443 --uuid YOUR-UUID --transport tls
 ```
+
+SSH profiles can load exit countries from a zone-capable entry host (`docs/ZONES.md`). A normal OpenSSH server has no list and still connects.
 
 Data lives in `~/.config/easy/`. See `docs/INSTALL.md` and `docs/TROUBLESHOOTING.md`.
 

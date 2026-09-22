@@ -211,4 +211,28 @@ mod tests {
         store.delete_profile(cfg.id).unwrap();
         assert!(store.list_profiles().unwrap().is_empty());
     }
+
+    #[test]
+    fn zone_cache_roundtrip_has_no_password() {
+        let dir = tempdir().unwrap();
+        let store = ConfigStore::open(dir.path().join("state.db")).unwrap();
+        let mut cfg = ConnectionConfig::new_ssh("Entry", "203.0.113.10", 443);
+        cfg.username = Some("ops".into());
+        cfg.selected_zone = Some("us-east".into());
+        cfg.zones_cache = Some(crate::ZonesCache {
+            hash: Some("abc".into()),
+            zones: vec![crate::ZoneInfo {
+                id: "us-east".into(),
+                name: "United States".into(),
+                iso: Some("US".into()),
+            }],
+            fetched_at: cfg.created_at,
+        });
+        store.upsert_profile(&cfg).unwrap();
+        let loaded = store.get_profile(cfg.id).unwrap();
+        assert_eq!(loaded.selected_zone.as_deref(), Some("us-east"));
+        let json = serde_json::to_string(&loaded.zones_cache).unwrap();
+        assert!(!json.to_lowercase().contains("password"));
+        assert_eq!(loaded.zones_cache.unwrap().zones[0].iso.as_deref(), Some("US"));
+    }
 }

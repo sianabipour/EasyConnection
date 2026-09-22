@@ -135,7 +135,14 @@ enum Commands {
         shared: SharedProfileArgs,
     },
     /// Connect a profile and keep proxies running until Ctrl-C
-    Connect { id: Uuid },
+    Connect {
+        id: Uuid,
+        /// Zone id from `fetch-zones`, or `auto` for the server default
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// Fetch exit countries/zones for an SSH-direct profile
+    FetchZones { id: Uuid },
     /// Show connection snapshot JSON
     Status,
     /// DNS / IPv6 leak report (needs a live tunnel for full results)
@@ -368,7 +375,23 @@ async fn main() -> Result<()> {
             let saved = controller.save_profile(cfg)?;
             println!("{}", saved.id);
         }
-        Commands::Connect { id } => {
+        Commands::FetchZones { id } => {
+            let cache = controller
+                .fetch_zones(id)
+                .await
+                .with_context(|| "could not load zones")?;
+            println!("{}", serde_json::to_string_pretty(&cache)?);
+        }
+        Commands::Connect { id, zone } => {
+            if let Some(zone) = zone {
+                let zone_id = match zone.as_str() {
+                    "" | "auto" | "best" => None,
+                    other => Some(other.to_string()),
+                };
+                controller
+                    .set_selected_zone(id, zone_id)
+                    .with_context(|| "could not save zone")?;
+            }
             let snap = controller
                 .connect(id)
                 .await

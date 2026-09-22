@@ -71,6 +71,8 @@ pub fn run() {
             commands::get_profile,
             commands::update_ssh_profile,
             commands::delete_profile,
+            commands::fetch_zones,
+            commands::set_selected_zone,
             commands::connect_profile,
             commands::disconnect,
             commands::connection_status,

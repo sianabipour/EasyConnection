@@ -11,6 +11,7 @@ chrono = { workspace = true }
 parking_lot = { workspace = true }
 rt-config = { workspace = true }
 rt-secrets = { workspace = true }
+rt-ssh = { workspace = true }
 rt-tunnel = { workspace = true }
 rt-diagnostics = { workspace = true }
 serde = { workspace = true }

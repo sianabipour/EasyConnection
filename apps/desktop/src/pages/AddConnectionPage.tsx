@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useConnection } from "../hooks/useConnection";
+import { api } from "../lib/api";
+import type { ZoneInfo } from "../lib/types";
+import { ZonePicker } from "./ZonePicker";
 import type {
   DnsMode,
   FingerprintKind,
@@ -54,7 +57,7 @@ function needsPath(transport: TransportKind): boolean {
 export function AddConnectionPage() {
   const { id } = useParams<{ id: string }>();
   const editing = Boolean(id);
-  const { addSsh, addSs, addVless, updateProfile, getProfile } = useConnection();
+  const { addSsh, addSs, addVless, updateProfile, getProfile, refresh } = useConnection();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
@@ -66,6 +69,10 @@ export function AddConnectionPage() {
   const [tlsVerify, setTlsVerify] = useState(true);
   const [fingerprint, setFingerprint] = useState<FingerprintKind>("default");
   const [loading, setLoading] = useState(editing);
+  const [zones, setZones] = useState<ZoneInfo[]>([]);
+  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [zonesLoading, setZonesLoading] = useState(false);
+  const [zonesError, setZonesError] = useState<string | null>(null);
   const [defaults, setDefaults] = useState({
     name: "",
     host: "",
@@ -116,6 +123,28 @@ export function AddConnectionPage() {
         setUdpgw(Boolean(profile.udpgw_enabled));
         setTlsVerify(profile.tls_verify !== false);
         setFingerprint(asFingerprint(profile.tls_fingerprint));
+        setZones(profile.zones || []);
+        setSelectedZone(profile.selected_zone || null);
+        if (asProtocol(profile.protocol) === "ssh") {
+          setZonesLoading(true);
+          setZonesError(null);
+          void api
+            .fetchZones(id)
+            .then((fresh) => {
+              if (cancelled) return;
+              setZones(fresh.zones || []);
+              setSelectedZone(fresh.selected_zone || null);
+              void refresh();
+            })
+            .catch((err: unknown) => {
+              if (!cancelled) {
+                setZonesError(err instanceof Error ? err.message : String(err));
+              }
+            })
+            .finally(() => {
+              if (!cancelled) setZonesLoading(false);
+            });
+        }
         setDefaults({
           name: profile.name,
           host: profile.host,
@@ -167,7 +196,39 @@ export function AddConnectionPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, getProfile]);
+  }, [id, getProfile, refresh]);
+
+  async function loadZones() {
+    if (!id) return;
+    setZonesLoading(true);
+    setZonesError(null);
+    try {
+      const profile = await api.fetchZones(id);
+      setZones(profile.zones || []);
+      setSelectedZone(profile.selected_zone || null);
+      await refresh();
+      if (!profile.zones || profile.zones.length === 0) {
+        setZonesError("Could not load zones. Check connection and try again.");
+      }
+    } catch (err) {
+      setZonesError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setZonesLoading(false);
+    }
+  }
+
+  async function chooseZone(zoneId: string | null) {
+    if (!id) return;
+    setSelectedZone(zoneId);
+    try {
+      const profile = await api.setSelectedZone(id, zoneId);
+      setSelectedZone(profile.selected_zone || null);
+      setZones(profile.zones || zones);
+      await refresh();
+    } catch (err) {
+      setZonesError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -384,6 +445,23 @@ export function AddConnectionPage() {
         <p className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] px-4 py-3 text-xs text-[var(--color-muted)]">
           Proxy vs VPN / tunnel mode is chosen on the Home dashboard before Connect — not in this form.
         </p>
+
+        {protocol === "ssh" && editing && id && (
+          <ZonePicker
+            zones={zones}
+            selectedId={selectedZone}
+            loading={zonesLoading}
+            error={zonesError}
+            onReload={() => void loadZones()}
+            onSelect={(zoneId) => void chooseZone(zoneId)}
+          />
+        )}
+
+        {protocol === "ssh" && !editing && (
+          <p className="text-xs text-[var(--color-muted)]">
+            Save this SSH profile, then open it again to load exit countries from the entry host.
+          </p>
+        )}
 
         {protocol === "ssh" && (
           <label className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
