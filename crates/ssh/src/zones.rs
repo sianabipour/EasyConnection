@@ -32,7 +32,12 @@ pub struct ZoneFetchRequest {
 }
 
 impl ZoneFetchRequest {
-    pub fn new(host: impl Into<String>, port: u16, username: impl Into<String>, password: impl Into<String>) -> Self {
+    pub fn new(
+        host: impl Into<String>,
+        port: u16,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
         Self {
             host: host.into(),
             port,
@@ -242,7 +247,15 @@ fn parse_zone_item(item: &Value) -> Option<ZoneInfo> {
             .unwrap_or_else(|| id.clone());
             let iso = first_str(
                 obj,
-                &["iso", "isoCode", "code", "country", "countryCode", "country_iso", "country_code"],
+                &[
+                    "iso",
+                    "isoCode",
+                    "code",
+                    "country",
+                    "countryCode",
+                    "country_iso",
+                    "country_code",
+                ],
             )
             .and_then(|s| iso_if_code(&s))
             .or_else(|| iso_if_code(&id));
@@ -309,8 +322,14 @@ async fn exchange(host: &str, port: u16, request: &[u8], limit: Duration) -> Res
     };
     let buf = timeout(limit, fut)
         .await
-        .map_err(|_| SshError::Zones("Could not load zones. Check connection and try again.".into()))?
-        .map_err(|e| SshError::Zones(format!("Could not load zones. Check connection and try again. ({e})")))?;
+        .map_err(|_| {
+            SshError::Zones("Could not load zones. Check connection and try again.".into())
+        })?
+        .map_err(|e| {
+            SshError::Zones(format!(
+                "Could not load zones. Check connection and try again. ({e})"
+            ))
+        })?;
     split_http(&buf)
 }
 
@@ -460,5 +479,4 @@ mod tests {
         let err = parse_zone_list(b"SSH-2.0-OpenSSH_9.6").unwrap_err();
         assert!(err.to_string().contains("Could not load zones"));
     }
-
 }

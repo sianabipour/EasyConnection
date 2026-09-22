@@ -44,7 +44,12 @@ pub async fn connect(req: &DialRequest) -> Result<SslStream<TcpStream>> {
     let mut stream = SslStream::new(ssl, tcp).map_err(tls_err)?;
     tokio::time::timeout(HANDSHAKE_TIMEOUT, Pin::new(&mut stream).connect())
         .await
-        .map_err(|_| TransportError::Tls(format!("TLS handshake to {}:{} timed out", req.host, req.port)))?
+        .map_err(|_| {
+            TransportError::Tls(format!(
+                "TLS handshake to {}:{} timed out",
+                req.host, req.port
+            ))
+        })?
         .map_err(|e| TransportError::Tls(e.to_string()))?;
     Ok(stream)
 }

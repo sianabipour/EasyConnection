@@ -233,6 +233,9 @@ mod tests {
         assert_eq!(loaded.selected_zone.as_deref(), Some("us-east"));
         let json = serde_json::to_string(&loaded.zones_cache).unwrap();
         assert!(!json.to_lowercase().contains("password"));
-        assert_eq!(loaded.zones_cache.unwrap().zones[0].iso.as_deref(), Some("US"));
+        assert_eq!(
+            loaded.zones_cache.unwrap().zones[0].iso.as_deref(),
+            Some("US")
+        );
     }
 }

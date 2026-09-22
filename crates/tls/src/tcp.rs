@@ -20,9 +20,7 @@ pub async fn connect_tcp(host: &str, port: u16) -> Result<TcpStream> {
     let addrs = resolve_cached(host, port).await?;
     let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&addrs[..]))
         .await
-        .map_err(|_| {
-            TransportError::Other(format!("TCP connect to {host}:{port} timed out"))
-        })?
+        .map_err(|_| TransportError::Other(format!("TCP connect to {host}:{port} timed out")))?
         .map_err(|e| TransportError::Io(e))?;
     let _ = tcp.set_nodelay(true);
     Ok(tcp)

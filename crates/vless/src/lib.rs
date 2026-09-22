@@ -107,6 +107,8 @@ impl UpstreamConnector for VlessConnector {
             Ok(Box::new(raw) as Box<dyn UpstreamIo>)
         })
         .await
-        .map_err(|_| SocksError::Upstream(format!("VLESS connect to {timeout_host}:{port} timed out")))?
+        .map_err(|_| {
+            SocksError::Upstream(format!("VLESS connect to {timeout_host}:{port} timed out"))
+        })?
     }
 }

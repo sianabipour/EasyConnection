@@ -60,10 +60,7 @@ impl SshConnectOptions {
             .username
             .clone()
             .ok_or_else(|| SshError::Config("SSH username required".into()))?;
-        let username = crate::ssh_username_for_zone(
-            &username,
-            cfg.selected_zone.as_deref(),
-        );
+        let username = crate::ssh_username_for_zone(&username, cfg.selected_zone.as_deref());
         Ok(Self {
             host: cfg.host.clone(),
             port: cfg.port,

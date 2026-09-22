@@ -142,7 +142,9 @@ impl AppController {
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| CoreError::Other("SSH username required to load zones".into()))?;
         let password = match &cfg.authentication {
-            AuthMethod::Password { secret: Some(secret) } => self.secrets.get_secret(secret)?,
+            AuthMethod::Password {
+                secret: Some(secret),
+            } => self.secrets.get_secret(secret)?,
             _ => {
                 return Err(CoreError::Other(
                     "SSH password required to load zones".into(),
