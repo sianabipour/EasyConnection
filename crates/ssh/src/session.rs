@@ -44,6 +44,8 @@ pub struct SshConnectOptions {
     pub known_hosts_path: Option<PathBuf>,
     /// Exit zone id. None is Auto / best and does not send `X-Zone-Id`.
     pub zone_id: Option<String>,
+    /// The zone list was fetched with HTTPS. The select request uses the same scheme.
+    pub zone_https: bool,
 }
 
 impl SshConnectOptions {
@@ -75,6 +77,7 @@ impl SshConnectOptions {
                 .as_ref()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            zone_https: cfg.zones_cache.as_ref().is_some_and(|cache| cache.https),
         })
     }
 }
@@ -241,7 +244,7 @@ async fn signal_zone_if_selected(opts: &SshConnectOptions) {
     };
     let provider = HttpZoneProvider;
     if let Err(err) = provider
-        .signal_selected_zone(&opts.host, opts.port, zone_id)
+        .signal_selected_zone(&opts.host, opts.port, zone_id, opts.zone_https)
         .await
     {
         tracing::warn!(

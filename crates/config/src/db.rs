@@ -227,6 +227,7 @@ mod tests {
                 iso: Some("US".into()),
             }],
             fetched_at: cfg.created_at,
+            https: true,
         });
         store.upsert_profile(&cfg).unwrap();
         let loaded = store.get_profile(cfg.id).unwrap();

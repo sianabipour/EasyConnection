@@ -223,6 +223,9 @@ pub struct ZonesCache {
     pub hash: Option<String>,
     pub zones: Vec<ZoneInfo>,
     pub fetched_at: DateTime<Utc>,
+    /// The list came back over TLS on this profile's port (`https` host flag).
+    #[serde(default)]
+    pub https: bool,
 }
 
 impl Default for TlsSettings {

@@ -26,6 +26,8 @@ Two different mechanisms share the word “zone”:
 
 ## Listing zones
 
+The phone builds `http://` or `https://` from the host's `http` / `https` flag and uses that host's own port. An SSH profile has no flag, so Easy tries the profile host and port in this order: HTTPS (certificate checked), HTTPS again if the certificate is not trusted, then cleartext HTTP. The first reply with a `zones` array wins. The `Host` header omits `:80` for HTTP and `:443` for HTTPS.
+
 Easy sends this to the profile host and port (path `/`):
 
 ```http
@@ -65,10 +67,10 @@ of that GET is decrypted by RocketTunnel (`smart_config: decrypt failed`).
 That decrypt format is proprietary and is **not** implemented here.
 
 Easy keeps the SSH username as stored (`ssh_username_for_zone` does not rewrite
-it). When a zone id is saved, connect sends the `X-Zone-Id` GET to the entry
-host before the SSH handshake, then opens SSH with the normal username and
-password. If that HTTP request fails (typical for a plain OpenSSH port), SSH
-still connects.
+it). When a zone id is saved, connect sends the `X-Zone-Id` GET on the same
+scheme that returned the zone list (HTTPS when `zones_cache.https` is set),
+then opens SSH with the normal username and password. If that request fails,
+SSH still connects. The decrypted flowgraph body is still not applied.
 
 ## Where it lives
 

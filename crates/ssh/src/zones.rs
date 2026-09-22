@@ -8,7 +8,8 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use rt_config::ZoneInfo;
+use rt_config::{TlsSettings, Transport, ZoneInfo};
+use rt_tls::DialRequest;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -53,13 +54,21 @@ impl ZoneFetchRequest {
 pub struct ZoneList {
     pub hash: Option<String>,
     pub zones: Vec<ZoneInfo>,
+    /// True when this list was read with HTTPS on the profile port.
+    pub https: bool,
 }
 
 /// How a client obtains and applies zones. Tunnel/core depend on this, not on a UI.
 #[async_trait]
 pub trait ZoneProvider: Send + Sync {
     async fn fetch_zones(&self, req: ZoneFetchRequest) -> Result<ZoneList>;
-    async fn signal_selected_zone(&self, host: &str, port: u16, zone_id: &str) -> Result<()>;
+    async fn signal_selected_zone(
+        &self,
+        host: &str,
+        port: u16,
+        zone_id: &str,
+        https: bool,
+    ) -> Result<()>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -69,45 +78,102 @@ pub struct HttpZoneProvider;
 impl ZoneProvider for HttpZoneProvider {
     async fn fetch_zones(&self, req: ZoneFetchRequest) -> Result<ZoneList> {
         let body = zone_command_body(&req.username, &req.password);
-        let request = http_request(
-            "POST",
-            &req.host,
-            req.port,
-            &req.path,
-            Some("application/json"),
-            None,
-            Some(body.as_bytes()),
-        );
-        let response = exchange(&req.host, req.port, request.as_bytes(), req.timeout).await?;
-        if !(200..300).contains(&response.status) {
-            return Err(SshError::Zones(format!(
-                "Could not load zones. Check connection and try again. (HTTP {})",
-                response.status
-            )));
+        let mut errors = Vec::new();
+        for attempt in zone_attempts(None) {
+            let request = http_request(&ZoneHttpRequest {
+                method: "POST",
+                host: &req.host,
+                port: req.port,
+                path: &req.path,
+                content_type: Some("application/json"),
+                zone_id: None,
+                body: Some(body.as_bytes()),
+                https: attempt.https,
+            });
+            match exchange_attempt(
+                &req.host,
+                req.port,
+                attempt,
+                request.as_bytes(),
+                req.timeout.min(Duration::from_secs(8)),
+            )
+            .await
+            {
+                Ok(response) if (200..300).contains(&response.status) => {
+                    match parse_zone_list(&response.body) {
+                        Ok(mut list) => {
+                            list.https = attempt.https;
+                            return Ok(list);
+                        }
+                        Err(err) => errors.push(format!("{}: {err}", attempt.label())),
+                    }
+                }
+                Ok(response) => {
+                    errors.push(format!("{}: HTTP {}", attempt.label(), response.status))
+                }
+                Err(err) => errors.push(format!("{}: {err}", attempt.label())),
+            }
         }
-        parse_zone_list(&response.body)
+        Err(SshError::Zones(format!(
+            "Could not load zones. Check connection and try again. ({})",
+            errors.join("; ")
+        )))
     }
 
-    async fn signal_selected_zone(&self, host: &str, port: u16, zone_id: &str) -> Result<()> {
+    async fn signal_selected_zone(
+        &self,
+        host: &str,
+        port: u16,
+        zone_id: &str,
+        https: bool,
+    ) -> Result<()> {
         let zone_id = zone_id.trim();
         if zone_id.is_empty() {
             return Ok(());
         }
-        let request = http_request("GET", host, port, DEFAULT_PATH, None, Some(zone_id), None);
-        let response = exchange(host, port, request.as_bytes(), Duration::from_secs(8)).await?;
-        if response.body.starts_with(b"SSH-") || response.status == 0 {
-            return Err(SshError::Zones(
-                "entry host did not answer the zone HTTP request".into(),
-            ));
+        let mut last_err = None;
+        for attempt in zone_attempts(Some(https)) {
+            let request = http_request(&ZoneHttpRequest {
+                method: "GET",
+                host,
+                port,
+                path: DEFAULT_PATH,
+                content_type: None,
+                zone_id: Some(zone_id),
+                body: None,
+                https: attempt.https,
+            });
+            match exchange_attempt(
+                host,
+                port,
+                attempt,
+                request.as_bytes(),
+                Duration::from_secs(8),
+            )
+            .await
+            {
+                Ok(response) if response.body.starts_with(b"SSH-") || response.status == 0 => {
+                    last_err = Some(SshError::Zones(
+                        "entry host did not answer the zone HTTP request".into(),
+                    ));
+                }
+                Ok(response) => {
+                    tracing::info!(
+                        host,
+                        port,
+                        status = response.status,
+                        zone_id,
+                        https = attempt.https,
+                        "signaled selected zone"
+                    );
+                    return Ok(());
+                }
+                Err(err) => last_err = Some(err),
+            }
         }
-        tracing::info!(
-            host,
-            port,
-            status = response.status,
-            zone_id,
-            "signaled selected zone"
-        );
-        Ok(())
+        Err(last_err.unwrap_or_else(|| {
+            SshError::Zones("entry host did not answer the zone HTTP request".into())
+        }))
     }
 }
 
@@ -127,31 +193,39 @@ pub fn zone_command_body(username: &str, password: &str) -> String {
 }
 
 /// smart-config HTTP request. `X-Zone-Id` is included only when `zone_id` is set.
-pub fn http_request(
-    method: &str,
-    host: &str,
-    port: u16,
-    path: &str,
-    content_type: Option<&str>,
-    zone_id: Option<&str>,
-    body: Option<&[u8]>,
-) -> String {
-    let path = if path.is_empty() { DEFAULT_PATH } else { path };
-    let host_header = host_header(host, port);
+pub struct ZoneHttpRequest<'a> {
+    pub method: &'a str,
+    pub host: &'a str,
+    pub port: u16,
+    pub path: &'a str,
+    pub content_type: Option<&'a str>,
+    pub zone_id: Option<&'a str>,
+    pub body: Option<&'a [u8]>,
+    pub https: bool,
+}
+
+pub fn http_request(req: &ZoneHttpRequest<'_>) -> String {
+    let path = if req.path.is_empty() {
+        DEFAULT_PATH
+    } else {
+        req.path
+    };
+    let host_header = host_header(req.host, req.port, req.https);
     let mut out = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\n",
+        method = req.method,
     );
-    if let Some(id) = zone_id.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(id) = req.zone_id.map(str::trim).filter(|s| !s.is_empty()) {
         out.push_str("X-Zone-Id: ");
         out.push_str(id);
         out.push_str("\r\n");
     }
-    if let Some(ct) = content_type {
+    if let Some(ct) = req.content_type {
         out.push_str("Content-Type: ");
         out.push_str(ct);
         out.push_str("\r\n");
     }
-    if let Some(body) = body {
+    if let Some(body) = req.body {
         out.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
         out.push_str(&String::from_utf8_lossy(body));
     } else {
@@ -160,16 +234,69 @@ pub fn http_request(
     out
 }
 
-fn host_header(host: &str, port: u16) -> String {
+fn host_header(host: &str, port: u16, https: bool) -> String {
     let host = if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]")
     } else {
         host.to_string()
     };
-    if port == 80 {
+    let default_port = if https { 443 } else { 80 };
+    if port == default_port {
         host
     } else {
         format!("{host}:{port}")
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ZoneAttempt {
+    https: bool,
+    verify: bool,
+}
+
+impl ZoneAttempt {
+    fn label(self) -> &'static str {
+        match (self.https, self.verify) {
+            (true, true) => "https",
+            (true, false) => "https-insecure",
+            (false, _) => "http",
+        }
+    }
+}
+
+/// RocketTunnel picks `http://` or `https://` from the host flag and keeps the
+/// host's own port. An SSH profile has no flag, so try TLS first (the smart
+/// flowgraph's `tls` node uses ALPN `http/1.1`), then cleartext HTTP.
+fn zone_attempts(https: Option<bool>) -> Vec<ZoneAttempt> {
+    match https {
+        Some(true) => vec![
+            ZoneAttempt {
+                https: true,
+                verify: true,
+            },
+            ZoneAttempt {
+                https: true,
+                verify: false,
+            },
+        ],
+        Some(false) => vec![ZoneAttempt {
+            https: false,
+            verify: false,
+        }],
+        None => vec![
+            ZoneAttempt {
+                https: true,
+                verify: true,
+            },
+            ZoneAttempt {
+                https: true,
+                verify: false,
+            },
+            ZoneAttempt {
+                https: false,
+                verify: false,
+            },
+        ],
     }
 }
 
@@ -214,7 +341,11 @@ pub fn parse_zone_list(body: &[u8]) -> Result<ZoneList> {
     if zones.is_empty() {
         return Err(SshError::Zones("Invalid response: no zones".into()));
     }
-    Ok(ZoneList { hash, zones })
+    Ok(ZoneList {
+        hash,
+        zones,
+        https: false,
+    })
 }
 
 fn parse_zone_item(item: &Value) -> Option<ZoneInfo> {
@@ -291,22 +422,27 @@ struct HttpResponse {
     body: Vec<u8>,
 }
 
-async fn exchange(host: &str, port: u16, request: &[u8], limit: Duration) -> Result<HttpResponse> {
+async fn exchange_attempt(
+    host: &str,
+    port: u16,
+    attempt: ZoneAttempt,
+    request: &[u8],
+    limit: Duration,
+) -> Result<HttpResponse> {
     let fut = async {
-        let mut stream = TcpStream::connect((host, port)).await?;
-        let _ = stream.set_nodelay(true);
-        stream.write_all(request).await?;
+        let mut stream = open_zone_stream(host, port, attempt).await?;
+        stream.write_all(request).await.map_err(zone_io)?;
         let mut buf = Vec::new();
         let mut tmp = [0u8; 8192];
         loop {
-            let n = stream.read(&mut tmp).await?;
+            let n = stream.read(&mut tmp).await.map_err(zone_io)?;
             if n == 0 {
                 break;
             }
             if buf.len() + n > MAX_BODY + 8192 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "zone response too large",
+                return Err(SshError::Zones(
+                    "Could not load zones. Check connection and try again. (response too large)"
+                        .into(),
                 ));
             }
             buf.extend_from_slice(&tmp[..n]);
@@ -318,19 +454,41 @@ async fn exchange(host: &str, port: u16, request: &[u8], limit: Duration) -> Res
                 }
             }
         }
-        Ok::<_, std::io::Error>(buf)
+        Ok::<_, SshError>(buf)
     };
-    let buf = timeout(limit, fut)
-        .await
-        .map_err(|_| {
-            SshError::Zones("Could not load zones. Check connection and try again.".into())
-        })?
-        .map_err(|e| {
-            SshError::Zones(format!(
-                "Could not load zones. Check connection and try again. ({e})"
-            ))
-        })?;
+    let buf = timeout(limit, fut).await.map_err(|_| {
+        SshError::Zones("Could not load zones. Check connection and try again.".into())
+    })??;
     split_http(&buf)
+}
+
+fn zone_io(err: std::io::Error) -> SshError {
+    SshError::Zones(format!(
+        "Could not load zones. Check connection and try again. ({err})"
+    ))
+}
+
+async fn open_zone_stream(
+    host: &str,
+    port: u16,
+    attempt: ZoneAttempt,
+) -> Result<Box<dyn rt_tls::TransportIo>> {
+    if !attempt.https {
+        let stream = TcpStream::connect((host, port)).await.map_err(zone_io)?;
+        let _ = stream.set_nodelay(true);
+        return Ok(Box::new(stream));
+    }
+    let tls = TlsSettings {
+        verify: attempt.verify,
+        alpn: vec!["http/1.1".into()],
+        ..TlsSettings::default()
+    };
+    let req = DialRequest::from_profile(host, port, Transport::Tls, tls);
+    rt_tls::dial(&req).await.map_err(|err| {
+        SshError::Zones(format!(
+            "Could not load zones. Check connection and try again. ({err})"
+        ))
+    })
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
@@ -421,14 +579,45 @@ mod tests {
 
     #[test]
     fn select_header_only_when_zone_set() {
-        let auto = http_request("GET", "entry.example", 8080, "/", None, None, None);
+        let auto = http_request(&ZoneHttpRequest {
+            method: "GET",
+            host: "entry.example",
+            port: 8080,
+            path: "/",
+            content_type: None,
+            zone_id: None,
+            body: None,
+            https: false,
+        });
         assert!(auto.contains("User-Agent: smart_config/1.0\r\n"));
         assert!(auto.contains("Host: entry.example:8080\r\n"));
         assert!(!auto.contains("X-Zone-Id"));
 
-        let forced = http_request("GET", "entry.example", 80, "/", None, Some("us"), None);
+        let forced = http_request(&ZoneHttpRequest {
+            method: "GET",
+            host: "entry.example",
+            port: 80,
+            path: "/",
+            content_type: None,
+            zone_id: Some("us"),
+            body: None,
+            https: false,
+        });
         assert!(forced.contains("Host: entry.example\r\n"));
         assert!(forced.contains("X-Zone-Id: us\r\n"));
+
+        let tls = http_request(&ZoneHttpRequest {
+            method: "POST",
+            host: "entry.example",
+            port: 443,
+            path: "/",
+            content_type: None,
+            zone_id: None,
+            body: None,
+            https: true,
+        });
+        assert!(tls.contains("Host: entry.example\r\n"));
+        assert!(!tls.contains(":443"));
     }
 
     #[test]

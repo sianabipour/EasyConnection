@@ -164,6 +164,7 @@ impl AppController {
             hash: list.hash,
             zones: list.zones,
             fetched_at: chrono::Utc::now(),
+            https: list.https,
         };
         if let Some(selected) = cfg.selected_zone.clone() {
             if !cache.zones.iter().any(|z| z.id == selected) {
