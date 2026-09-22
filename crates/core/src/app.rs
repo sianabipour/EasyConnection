@@ -171,9 +171,6 @@ impl AppController {
                 cfg.selected_zone = None;
             }
         }
-        if cfg.selected_zone.is_none() && cache.zones.len() == 1 {
-            cfg.selected_zone = Some(cache.zones[0].id.clone());
-        }
         cfg.zones_cache = Some(cache.clone());
         cfg.updated_at = chrono::Utc::now();
         self.store.upsert_profile(&cfg)?;

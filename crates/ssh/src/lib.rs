@@ -13,8 +13,8 @@ pub use error::SshError;
 pub use host_key::HostKeyVerifier;
 pub use session::{SshConnectOptions, SshSession, SshUpstream};
 pub use zones::{
-    http_request, parse_zone_list, ssh_username_for_zone, zone_command_body, HttpZoneProvider,
-    ZoneFetchRequest, ZoneHttpRequest, ZoneList, ZoneProvider,
+    http_request, parse_zone_list, ssh_username_for_zone, zone_command_body, zones_from_welcome,
+    HttpZoneProvider, ZoneFetchRequest, ZoneHttpRequest, ZoneList, ZoneProvider,
 };
 
 pub type Result<T> = std::result::Result<T, SshError>;

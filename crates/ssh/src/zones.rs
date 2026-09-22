@@ -311,7 +311,7 @@ fn zone_attempts(https: Option<bool>) -> Vec<ZoneAttempt> {
     }
 }
 
-async fn tcp_speaks_ssh(host: &str, port: u16) -> bool {
+pub(crate) async fn tcp_speaks_ssh(host: &str, port: u16) -> bool {
     let Ok(Ok(mut stream)) =
         timeout(Duration::from_secs(5), TcpStream::connect((host, port))).await
     else {
@@ -328,20 +328,71 @@ async fn tcp_speaks_ssh(host: &str, port: u16) -> bool {
 /// (`Welcome to AT1 🇦🇹 Austria`), not the smart-config HTTP zone command.
 async fn zones_from_ssh_banner(req: &ZoneFetchRequest) -> Result<ZoneList> {
     let banner = read_auth_banner(req).await?;
-    let zones = zones_from_welcome(&banner);
-    if zones.is_empty() {
+    let landed = zones_from_welcome(&banner);
+    let panel = landed.iter().any(|z| is_panel_node(&z.id));
+    if !panel {
         return Err(SshError::Zones(
             "SSH login worked, but the server did not name a location.".into(),
         ));
     }
     Ok(ZoneList {
         hash: None,
-        zones,
+        zones: provider_catalog(),
         https: false,
     })
 }
 
-async fn read_auth_banner(req: &ZoneFetchRequest) -> Result<String> {
+fn is_panel_node(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    bytes.len() >= 3
+        && bytes[..2].iter().all(|c| c.is_ascii_uppercase())
+        && bytes[2..].iter().all(|c| c.is_ascii_digit())
+}
+
+/// Servers this gateway is known to host. The login banner only reports
+/// whichever node this attempt was assigned, so the picker uses the catalog.
+pub fn provider_catalog() -> Vec<ZoneInfo> {
+    const ROWS: &[(&str, &str, &str)] = &[
+        ("AL1", "Albania 1", "AL"),
+        ("AU1", "Australia 1", "AU"),
+        ("AT1", "Austria 1", "AT"),
+        ("CA1", "Canada 1", "CA"),
+        ("EE1", "Estonia 1", "EE"),
+        ("FI1", "Finland 1", "FI"),
+        ("FR1", "France 1", "FR"),
+        ("DE4", "Germany 4", "DE"),
+        ("IN1", "India 1", "IN"),
+        ("IE1", "Ireland 1", "IE"),
+        ("IT1", "Italy 1", "IT"),
+        ("JP1", "Japan 1", "JP"),
+        ("KZ1", "Kazakhstan 1", "KZ"),
+        ("LU1", "Luxembourg 1", "LU"),
+        ("NL3", "Netherlands 3", "NL"),
+        ("PL1", "Poland 1", "PL"),
+        ("PT1", "Portugal 1", "PT"),
+        ("RO1", "Romania 1", "RO"),
+        ("SG1", "Singapore 1", "SG"),
+        ("ZA1", "South Africa 1", "ZA"),
+        ("ES1", "Spain 1", "ES"),
+        ("ES2", "Spain 2", "ES"),
+        ("SE1", "Sweden 1", "SE"),
+        ("TR1", "Turkey 1", "TR"),
+        ("UA1", "Ukraine 1", "UA"),
+        ("AE1", "United Arab Emirates 1", "AE"),
+        ("UK2", "United Kingdom 2", "GB"),
+        ("US2", "United States 2", "US"),
+        ("US1", "United States 1", "US"),
+    ];
+    ROWS.iter()
+        .map(|(id, name, iso)| ZoneInfo {
+            id: (*id).to_string(),
+            name: (*name).to_string(),
+            iso: Some((*iso).to_string()),
+        })
+        .collect()
+}
+
+pub(crate) async fn read_auth_banner(req: &ZoneFetchRequest) -> Result<String> {
     struct BannerHandler {
         banner: Arc<std::sync::Mutex<String>>,
     }
@@ -831,6 +882,21 @@ mod tests {
     fn missing_zones_is_an_error() {
         let err = parse_zone_list(br#"{"hash":"x","ok":true}"#).unwrap_err();
         assert!(err.to_string().contains("Invalid response: no zones"));
+    }
+
+    #[test]
+    fn catalog_lists_the_known_servers() {
+        let zones = provider_catalog();
+        assert_eq!(zones.len(), 29);
+        assert!(zones.iter().any(|z| z.id == "DE4" && z.name == "Germany 4"));
+        assert!(zones.iter().any(|z| z.id == "ES1" && z.name == "Spain 1"));
+        assert!(zones.iter().any(|z| z.id == "ES2" && z.name == "Spain 2"));
+        assert!(zones
+            .iter()
+            .any(|z| z.id == "US1" && z.name == "United States 1"));
+        assert!(zones
+            .iter()
+            .any(|z| z.id == "NL3" && z.name == "Netherlands 3"));
     }
 
     #[test]

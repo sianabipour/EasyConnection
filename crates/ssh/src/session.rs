@@ -19,6 +19,7 @@ use crate::{HttpZoneProvider, Result, SshError, ZoneProvider};
 
 struct ClientHandler {
     verifier: HostKeyVerifier,
+    banner: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 impl client::Handler for ClientHandler {
@@ -30,6 +31,18 @@ impl client::Handler for ClientHandler {
         server_public_key: &keys::PublicKey,
     ) -> std::result::Result<bool, Self::Error> {
         self.verifier.verify(server_public_key).await
+    }
+
+    async fn auth_banner(
+        &mut self,
+        banner: &str,
+        _session: &mut client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        self.banner
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .push_str(banner);
+        Ok(())
     }
 }
 
@@ -90,53 +103,29 @@ pub struct SshSession {
 
 impl SshSession {
     pub async fn connect(opts: SshConnectOptions, secrets: &SecretsStore) -> Result<Self> {
-        signal_zone_if_selected(&opts).await;
-        let known_hosts = opts.known_hosts_path.unwrap_or_else(default_known_hosts);
-        let verifier = HostKeyVerifier::new(
-            opts.host.clone(),
-            opts.port,
-            opts.host_key_policy,
-            known_hosts,
-        );
-
-        let config = client::Config {
-            inactivity_timeout: None,
-            keepalive_interval: Some(Duration::from_secs(opts.keepalive_secs.max(5))),
-            keepalive_max: 5,
-            // Larger window reduces SSH-level stalls on parallel page loads.
-            window_size: 4 * 1024 * 1024,
-            maximum_packet_size: 32768,
-            preferred: Preferred::default(),
-            ..Default::default()
-        };
-
-        let handler = ClientHandler { verifier };
-        // Dial ourselves so we can set TCP_NODELAY on the SSH TCP (russh connect does not).
-        let tcp = timeout(
-            Duration::from_secs(opts.connect_timeout_secs.max(1)),
-            tokio::net::TcpStream::connect((opts.host.as_str(), opts.port)),
-        )
-        .await
-        .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))?
-        .map_err(SshError::from)?;
-        let _ = tcp.set_nodelay(true);
-
-        let connect_fut = client::connect_stream(Arc::new(config), tcp, handler);
-        let mut handle = timeout(
-            Duration::from_secs(opts.connect_timeout_secs.max(1)),
-            connect_fut,
-        )
-        .await
-        .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))??;
-
-        authenticate(&mut handle, &opts.username, &opts.auth, secrets).await?;
-
-        info!(host = %opts.host, port = opts.port, user = %opts.username, "SSH session established");
-        Ok(Self {
-            handle,
-            host: opts.host,
-            port: opts.port,
-        })
+        let want = opts.zone_id.clone().filter(|id| !id.is_empty());
+        let tries = if want.is_some() { 8 } else { 1 };
+        let mut last_landed = None;
+        for attempt in 1..=tries {
+            let (session, landed) = connect_once(&opts, secrets).await?;
+            let matches = match (&want, &landed) {
+                (None, _) | (Some(_), None) => true,
+                (Some(want_id), Some(got)) => got == want_id,
+            };
+            if matches {
+                return Ok(session);
+            }
+            last_landed = landed;
+            let _ = session.disconnect().await;
+            if attempt == tries {
+                break;
+            }
+        }
+        Err(SshError::Zones(format!(
+            "Could not reach {}. The gateway assigned {}.",
+            want.unwrap_or_else(|| "the selected server".into()),
+            last_landed.unwrap_or_else(|| "no location".into())
+        )))
     }
 
     /// SSH over an already-dialed transport (TLS / WebSocket / HTTP Upgrade).
@@ -164,7 +153,10 @@ impl SshSession {
             ..Default::default()
         };
 
-        let handler = ClientHandler { verifier };
+        let handler = ClientHandler {
+            verifier,
+            banner: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+        };
         let connect_fut = client::connect_stream(Arc::new(config), stream, handler);
         let mut handle = timeout(
             Duration::from_secs(opts.connect_timeout_secs.max(1)),
@@ -236,6 +228,76 @@ impl UpstreamConnector for SshUpstream {
             .map_err(|e| SocksError::Upstream(e.to_string()))?;
         Ok(Box::new(stream))
     }
+}
+
+async fn connect_once(
+    opts: &SshConnectOptions,
+    secrets: &SecretsStore,
+) -> Result<(SshSession, Option<String>)> {
+    if !crate::zones::tcp_speaks_ssh(&opts.host, opts.port).await {
+        signal_zone_if_selected(opts).await;
+    }
+    let known_hosts = opts
+        .known_hosts_path
+        .clone()
+        .unwrap_or_else(default_known_hosts);
+    let verifier = HostKeyVerifier::new(
+        opts.host.clone(),
+        opts.port,
+        opts.host_key_policy,
+        known_hosts,
+    );
+    let banner = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let config = client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(opts.keepalive_secs.max(5))),
+        keepalive_max: 5,
+        window_size: 4 * 1024 * 1024,
+        maximum_packet_size: 32768,
+        preferred: Preferred::default(),
+        ..Default::default()
+    };
+    let handler = ClientHandler {
+        verifier,
+        banner: std::sync::Arc::clone(&banner),
+    };
+    let tcp = timeout(
+        Duration::from_secs(opts.connect_timeout_secs.max(1)),
+        tokio::net::TcpStream::connect((opts.host.as_str(), opts.port)),
+    )
+    .await
+    .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))?
+    .map_err(SshError::from)?;
+    let _ = tcp.set_nodelay(true);
+    let mut handle = timeout(
+        Duration::from_secs(opts.connect_timeout_secs.max(1)),
+        client::connect_stream(Arc::new(config), tcp, handler),
+    )
+    .await
+    .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))??;
+    authenticate(&mut handle, &opts.username, &opts.auth, secrets).await?;
+    if opts.zone_id.is_some() {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    let text = banner.lock().unwrap_or_else(|err| err.into_inner()).clone();
+    let landed = crate::zones_from_welcome(&text)
+        .into_iter()
+        .find(|zone| {
+            let bytes = zone.id.as_bytes();
+            bytes.len() >= 3
+                && bytes[..2].iter().all(|c| c.is_ascii_uppercase())
+                && bytes[2..].iter().all(|c| c.is_ascii_digit())
+        })
+        .map(|zone| zone.id);
+    info!(host = %opts.host, port = opts.port, user = %opts.username, landed = ?landed, "SSH session established");
+    Ok((
+        SshSession {
+            handle,
+            host: opts.host.clone(),
+            port: opts.port,
+        },
+        landed,
+    ))
 }
 
 async fn signal_zone_if_selected(opts: &SshConnectOptions) {
