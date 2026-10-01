@@ -119,7 +119,7 @@ Application → kernel TCP → nftables table inet easy (output NAT redirect)
            → 127.0.0.1:13450 transproxy → upstream connector → remote
 ```
 
-The path to the remote server may be Direct TCP or TLS / WebSocket / WSS / HTTP Upgrade (`openssl s_client` + RFC 6455).
+For SSH and Shadowsocks, the path to the remote server may be Direct TCP or TLS / WebSocket / WSS / HTTP Upgrade (in-process OpenSSL + RFC 6455). VLESS transport and security are handled by the selected Xray/sing-box process behind a private loopback SOCKS listener.
 
 `easy0` is created, addressed, and owned by the helper. Phase 3 does **not** run a userspace TCP/IP stack on the TUN, so default routes are **not** pointed at the TUN (that would blackhole traffic).
 
@@ -143,4 +143,3 @@ Leak report: `easy dns-status` or Routing → Run check (TUN present, nft table,
 nftables: only `table inet easy`. Kill switch adds a final `reject` after accepts for lo/TUN/server/bypass.
 
 Emergency restore: `easy emergency-restore` or `sudo easy-helper --cleanup-and-exit`.
-

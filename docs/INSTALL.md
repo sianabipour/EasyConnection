@@ -29,6 +29,16 @@ ls -l /run/easy/helper.sock
 
 Proxy-only (local SOCKS on `127.0.0.1:1080`) works even if you never use full tunnel.
 
+VLESS profiles require either `xray` or `sing-box` installed in `PATH`. Automatic
+mode tries Xray first and then sing-box. You can force the engine or point to a
+custom binary:
+
+```bash
+export EASY_VLESS_ENGINE=xray # auto, xray, or sing-box
+export EASY_XRAY_PATH=/opt/xray/xray
+# or: export EASY_SING_BOX_PATH=/opt/sing-box/sing-box
+```
+
 ## Build and install from source
 
 Needs Rust 1.80+, Node 22+, and Tauri Linux packages (see `docs/DEVELOPMENT.md`).
@@ -63,7 +73,7 @@ easy connect <uuid>
 easy dns-status
 ```
 
-TLS transports need `openssl` on `PATH`. UDPGW needs `badvpn-udpgw` on the SSH host.
+TLS transports use the OpenSSL runtime library included as a package dependency. UDPGW needs `badvpn-udpgw` on the SSH host.
 
 ## If networking is stuck after a crash
 

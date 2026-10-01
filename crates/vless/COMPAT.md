@@ -1,12 +1,12 @@
 # VLESS adapter compatibility
 
-1. **Protocol** — VLESS TCP request (version 0, UUID, no addons, command TCP).
-2. **Transport** — Direct, TLS, WebSocket, WSS, or HTTP Upgrade via `rt-tls::dial`.
-3. **Authentication** — UUID only. No extra user/password.
-4. **Encryption** — `none` only. Payload after the header is plaintext on the transport (use TLS/WSS for confidentiality).
-5. **Handshake** — write request (version, UUID, addon_len=0, cmd=0x01, port BE, ATYP + address); read response (version + addon_len + addons). Remainder is the TCP stream.
-6. **DNS** — domains are sent as ATYP 0x02. System DNS follows the profile DNS mode in full/split tunnel.
-7. **UDP** — command UDP is not implemented. UDPGW is SSH-only.
-8. **IPv6** — ATYP 0x03 for IPv6 destinations.
-9. **Routing** — same local SOCKS/HTTP listeners and nft TCP redirect as SSH.
-10. **Status** — public VLESS TCP header only. **Not implemented:** `xtls-rprx-vision`, XTLS, Reality, Mux, UDP. Encryption other than `none` is rejected. A remote VLESS inbound with encryption=none is required.
+1. **Protocol engine** — an installed Xray or sing-box process owns VLESS framing, TLS/Reality, and transport behavior. Easy Connection does not implement the VLESS wire protocol.
+2. **Selection** — `EASY_VLESS_ENGINE=auto` (default) tries Xray and then sing-box. Use `xray` or `sing-box` to force one. Custom binary paths can be supplied with `EASY_XRAY_PATH` and `EASY_SING_BOX_PATH`.
+3. **Transport** — TCP, WebSocket, gRPC, and HTTP Upgrade work with either engine. XHTTP requires Xray.
+4. **Security / flow** — `none`, TLS, Reality, and `xtls-rprx-vision` are passed to the selected engine. `xtls-rprx-vision-udp443` and XHTTP require Xray.
+5. **Integration** — the engine exposes a randomly selected SOCKS5 port bound only to `127.0.0.1`. The existing local SOCKS/HTTP and transparent TCP paths connect through it.
+6. **Secrets** — generated engine configuration is written mode `0600`, is never logged, and is removed after startup.
+7. **Lifecycle** — the child process is tied to the active connector and is terminated on disconnect or startup failure.
+8. **DNS / IPv6** — SOCKS domain names and IPv4/IPv6 literals are forwarded to the engine.
+9. **UDP** — the current Easy Connection upstream interface is TCP. VLESS UDP is not exposed yet.
+10. **Failure behavior** — a missing or incompatible engine produces a connection error; it must not crash the desktop process.

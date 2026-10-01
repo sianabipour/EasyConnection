@@ -8,7 +8,7 @@ export function AboutPage() {
         <code className="text-[var(--color-accent)]">easy</code>.
       </p>
       <p className="mt-4 text-sm text-[var(--color-muted)]">
-        Version 0.1.0 · Phase 8 (packaging, uninstall cleanup, Ubuntu 26.04 install)
+        Version 0.1.1 · Phase 8 (packaging, uninstall cleanup, Ubuntu 24.04+ install)
       </p>
     </div>
   );

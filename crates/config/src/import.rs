@@ -3,6 +3,8 @@
 use crate::model::*;
 use crate::{ConfigError, Result};
 
+const MAX_IMPORT_BYTES: usize = 1024 * 1024;
+
 pub struct ParsedImport {
     pub config: ConnectionConfig,
     pub password: Option<String>,
@@ -10,6 +12,12 @@ pub struct ParsedImport {
 
 /// Parse a JSON export, a raw profile JSON, or a share URI.
 pub fn parse_import(raw: &str) -> Result<ParsedImport> {
+    if raw.len() > MAX_IMPORT_BYTES {
+        return Err(ConfigError::Import(format!(
+            "import exceeds the {} KiB size limit",
+            MAX_IMPORT_BYTES / 1024
+        )));
+    }
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(ConfigError::Import("empty import".into()));
@@ -139,23 +147,54 @@ fn parse_vless(raw: &str) -> Result<ParsedImport> {
                 };
             }
             "security" => {
-                if (v.eq_ignore_ascii_case("tls") || v.eq_ignore_ascii_case("reality"))
-                    && cfg.transport == Transport::Direct
-                {
-                    cfg.transport = Transport::Tls;
+                if let ProtocolSettings::Vless { security, .. } = &mut cfg.settings {
+                    *security = v.to_ascii_lowercase();
                 }
             }
-            "type" | "net" => match v.to_ascii_lowercase().as_str() {
-                "ws" | "websocket" => {
-                    cfg.transport = if matches!(cfg.transport, Transport::Tls | Transport::Wss) {
-                        Transport::Wss
-                    } else {
-                        Transport::WebSocket
+            "type" | "net" => {
+                if let ProtocolSettings::Vless { network, .. } = &mut cfg.settings {
+                    *network = match v.to_ascii_lowercase().as_str() {
+                        "raw" | "none" | "" => "tcp".into(),
+                        "websocket" => "ws".into(),
+                        "http_upgrade" => "httpupgrade".into(),
+                        other => other.into(),
                     };
                 }
-                "httpupgrade" | "http_upgrade" => cfg.transport = Transport::HttpUpgrade,
-                _ => {}
-            },
+            }
+            "pbk" | "publickey" | "password" => {
+                if let ProtocolSettings::Vless {
+                    reality_public_key, ..
+                } = &mut cfg.settings
+                {
+                    *reality_public_key = Some(v.clone());
+                }
+            }
+            "sid" | "shortid" => {
+                if let ProtocolSettings::Vless {
+                    reality_short_id, ..
+                } = &mut cfg.settings
+                {
+                    *reality_short_id = Some(v.clone());
+                }
+            }
+            "servicename" => {
+                if let ProtocolSettings::Vless {
+                    grpc_service_name, ..
+                } = &mut cfg.settings
+                {
+                    *grpc_service_name = Some(v.clone());
+                }
+            }
+            "mode" => {
+                if let ProtocolSettings::Vless { xhttp_mode, .. } = &mut cfg.settings {
+                    *xhttp_mode = Some(v.clone());
+                }
+            }
+            "spx" | "spiderx" => {
+                if let ProtocolSettings::Vless { spider_x, .. } = &mut cfg.settings {
+                    *spider_x = Some(v.clone());
+                }
+            }
             "alpn" => {
                 cfg.tls.alpn = v
                     .split(',')
@@ -169,6 +208,51 @@ fn parse_vless(raw: &str) -> Result<ParsedImport> {
             _ => {}
         }
     }
+
+    let (security, network) = match &cfg.settings {
+        ProtocolSettings::Vless {
+            security, network, ..
+        } => (security.as_str(), network.as_str()),
+        _ => unreachable!(),
+    };
+    let uses_tls = match security {
+        "none" | "" => false,
+        "tls" | "reality" => true,
+        other => {
+            return Err(ConfigError::Import(format!(
+                "unsupported VLESS security `{other}` (supported: none, tls, reality)"
+            )))
+        }
+    };
+    cfg.transport = match network {
+        "tcp" | "raw" | "none" | "" => {
+            if uses_tls {
+                Transport::Tls
+            } else {
+                Transport::Direct
+            }
+        }
+        "ws" | "websocket" => {
+            if uses_tls {
+                Transport::Wss
+            } else {
+                Transport::WebSocket
+            }
+        }
+        "httpupgrade" | "http_upgrade" => {
+            // HttpUpgrade uses the presence of SNI/ALPN to select TLS.
+            if uses_tls && cfg.tls.sni.is_none() {
+                cfg.tls.sni = Some(cfg.host.clone());
+            }
+            Transport::HttpUpgrade
+        }
+        "grpc" | "xhttp" => Transport::Direct,
+        other => {
+            return Err(ConfigError::Import(format!(
+                "unsupported VLESS network `{other}` (supported: tcp, ws, grpc, httpupgrade, xhttp)"
+            )))
+        }
+    };
     crate::validate_connection(&cfg)?;
     Ok(ParsedImport {
         config: cfg,
@@ -290,6 +374,52 @@ mod tests {
         assert_eq!(p.config.transport, Transport::Tls);
         assert_eq!(p.config.tls.sni.as_deref(), Some("example.com"));
         assert_eq!(p.config.name, "n");
+    }
+
+    #[test]
+    fn vless_ws_tls_is_order_independent() {
+        for query in ["type=ws&security=tls", "security=tls&type=ws"] {
+            let uri =
+                format!("vless://00000000-0000-0000-0000-000000000000@example.com:443?{query}");
+            let parsed = parse_import(&uri).unwrap();
+            assert_eq!(parsed.config.transport, Transport::Wss);
+        }
+    }
+
+    #[test]
+    fn accepts_reality_and_grpc_variants() {
+        let reality = parse_import("vless://00000000-0000-0000-0000-000000000000@example.com:443?security=reality&type=tcp&sni=cdn.example.com&pbk=public-key&sid=0123").unwrap();
+        match reality.config.settings {
+            ProtocolSettings::Vless {
+                security,
+                reality_public_key,
+                reality_short_id,
+                ..
+            } => {
+                assert_eq!(security, "reality");
+                assert_eq!(reality_public_key.as_deref(), Some("public-key"));
+                assert_eq!(reality_short_id.as_deref(), Some("0123"));
+            }
+            _ => unreachable!(),
+        }
+
+        let grpc = parse_import("vless://00000000-0000-0000-0000-000000000000@example.com:443?type=grpc&security=tls&serviceName=edge").unwrap();
+        match grpc.config.settings {
+            ProtocolSettings::Vless {
+                network,
+                grpc_service_name,
+                ..
+            } => {
+                assert_eq!(network, "grpc");
+                assert_eq!(grpc_service_name.as_deref(), Some("edge"));
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_import() {
+        assert!(parse_import(&"x".repeat(MAX_IMPORT_BYTES + 1)).is_err());
     }
 
     #[test]

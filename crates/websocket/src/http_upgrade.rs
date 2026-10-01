@@ -21,17 +21,32 @@ where
     stream.flush().await?;
 
     let headers = read_headers(&mut stream).await?;
-    let status = headers.lines().next().unwrap_or("").to_ascii_uppercase();
-    if !status.contains(" 101 ")
-        && !status.starts_with("HTTP/1.1 101")
-        && !status.starts_with("HTTP/1.0 101")
-    {
+    let status = headers.lines().next().unwrap_or("");
+    if status.split_whitespace().nth(1) != Some("101") {
         return Err(WsError::Handshake(format!(
             "HTTP Upgrade expected 101, got {}",
             headers.lines().next().unwrap_or("empty")
         )));
     }
+    if !header_has_token(&headers, "upgrade", "websocket")
+        || !header_has_token(&headers, "connection", "upgrade")
+    {
+        return Err(WsError::Handshake(
+            "HTTP Upgrade response is missing required Upgrade headers".into(),
+        ));
+    }
     Ok(stream)
+}
+
+fn header_has_token(headers: &str, name: &str, token: &str) -> bool {
+    headers.lines().any(|line| {
+        line.split_once(':').is_some_and(|(key, value)| {
+            key.eq_ignore_ascii_case(name)
+                && value
+                    .split(',')
+                    .any(|part| part.trim().eq_ignore_ascii_case(token))
+        })
+    })
 }
 
 async fn read_headers<S: AsyncRead + Unpin>(stream: &mut S) -> Result<String> {
@@ -62,7 +77,9 @@ mod tests {
                 .unwrap()
                 .contains("Upgrade: websocket"));
             server
-                .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+                )
                 .await
                 .unwrap();
         });

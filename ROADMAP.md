@@ -64,10 +64,10 @@ Work is incremental. Each phase must compile, test, and document before the next
 - [x] Transport adapters: Direct, TLS, WebSocket, WSS, HTTP Upgrade
 - [x] TLS fingerprint profile architecture (Chrome/Firefox/Safari/Custom)
 - [x] Shadowsocks AEAD TCP (`aes-128-gcm`, `aes-256-gcm`)
-- [x] VLESS TCP (`encryption=none`)
+- [x] VLESS through external Xray/sing-box engines
 - [x] SSH-over-TLS / SOCKS-over-TLS composition
 
-**Exit criteria:** a profile can select protocol (SSH / Shadowsocks / VLESS) and transport; TLS uses system `openssl s_client` with verify on by default; fingerprint profiles only set ALPN (not JA3); SSH can run over TLS/WS/WSS/Upgrade; SS/VLESS feed the same local SOCKS/HTTP and full-tunnel TCP path. SS2022, chacha20, and VLESS Vision/XTLS are rejected, not faked.
+**Exit criteria:** a profile can select protocol (SSH / Shadowsocks / VLESS) and transport; TLS uses OpenSSL in-process for SSH/SS; VLESS is delegated to Xray/sing-box and feeds the same local SOCKS/HTTP and full-tunnel TCP path. SS2022 and chacha20 remain out of scope.
 
 ## Phase 7 — Advanced networking UX
 
@@ -112,9 +112,10 @@ Work is incremental. Each phase must compile, test, and document before the next
 | UDPGW | 5 | Implemented (SSH-only) |
 | Shadowsocks AEAD TCP | 6 | Implemented (`aes-128-gcm` / `aes-256-gcm`) |
 | Shadowsocks 2022 / UDP | 6 | Not in this build |
-| VLESS TCP | 6 | Implemented (`encryption=none`) |
-| VLESS Vision / XTLS | — | Not invented; rejected |
-| TLS / WS / WSS / HTTP Upgrade | 6 | Implemented (`openssl s_client` + RFC 6455) |
+| VLESS TCP / TLS / WS / gRPC / Upgrade | 6 | Implemented through Xray/sing-box |
+| VLESS Reality / Vision | 6 | Implemented through Xray/sing-box |
+| VLESS XHTTP | 6 | Implemented through Xray |
+| TLS / WS / WSS / HTTP Upgrade | 6 | Implemented (in-process OpenSSL + RFC 6455) |
 
 ## Definition of done (product)
 

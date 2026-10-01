@@ -1,6 +1,6 @@
 [package]
 name = "rt-vless"
-description = "VLESS TCP client (encryption=none)"
+description = "VLESS adapter for external Xray and sing-box engines"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ rust-version.workspace = true
 async-trait = { workspace = true }
 rt-config = { workspace = true }
 rt-socks = { workspace = true }
-rt-tls = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

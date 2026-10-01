@@ -120,11 +120,35 @@ pub enum ProtocolSettings {
         encryption: String,
         #[serde(default)]
         flow: String,
+        /// VLESS transport as named by share links: tcp, ws, grpc, httpupgrade, or xhttp.
+        #[serde(default = "default_vless_network")]
+        network: String,
+        /// none, tls, or reality.
+        #[serde(default = "default_vless_security")]
+        security: String,
         #[serde(default)]
         host: Option<String>,
         #[serde(default)]
         path: Option<String>,
+        #[serde(default)]
+        reality_public_key: Option<String>,
+        #[serde(default)]
+        reality_short_id: Option<String>,
+        #[serde(default)]
+        grpc_service_name: Option<String>,
+        #[serde(default)]
+        xhttp_mode: Option<String>,
+        #[serde(default)]
+        spider_x: Option<String>,
     },
+}
+
+fn default_vless_network() -> String {
+    "tcp".into()
+}
+
+fn default_vless_security() -> String {
+    "none".into()
 }
 
 fn default_keepalive() -> u64 {
@@ -437,8 +461,15 @@ impl ConnectionConfig {
                 uuid: uuid.into(),
                 encryption: "none".into(),
                 flow: String::new(),
+                network: default_vless_network(),
+                security: default_vless_security(),
                 host: None,
                 path: None,
+                reality_public_key: None,
+                reality_short_id: None,
+                grpc_service_name: None,
+                xhttp_mode: None,
+                spider_x: None,
             },
             bypass_private_networks: true,
             kill_switch: false,

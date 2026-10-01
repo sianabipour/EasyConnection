@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Notify;
+use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use crate::http_connect::handle_http_connect;
@@ -12,6 +12,8 @@ use crate::socks4::handle_socks4;
 use crate::socks5::{handle_socks5, Socks5Auth};
 use crate::upstream::UpstreamConnector;
 use crate::{Result, SocksError};
+
+const MAX_CONCURRENT_PROXY_SESSIONS: usize = 512;
 
 #[derive(Debug, Default)]
 pub struct ProxyStats {
@@ -63,6 +65,7 @@ impl ProxyServer {
         let stats = Arc::new(ProxyStats::default());
         let shutdown = Arc::new(Notify::new());
         let auth = Arc::new(auth);
+        let capacity = Arc::new(Semaphore::new(MAX_CONCURRENT_PROXY_SESSIONS));
 
         tracing::info!(%socks_addr, %http_addr, "local proxy listeners started");
 
@@ -73,6 +76,7 @@ impl ProxyServer {
             let stats = Arc::clone(&stats);
             let shutdown = Arc::clone(&shutdown);
             let auth = Arc::clone(&auth);
+            let capacity = Arc::clone(&capacity);
             tasks.push(tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -80,6 +84,17 @@ impl ProxyServer {
                         accepted = socks_listener.accept() => {
                             match accepted {
                                 Ok((stream, peer)) => {
+                                    let permit = match Arc::clone(&capacity).try_acquire_owned() {
+                                        Ok(permit) => permit,
+                                        Err(_) => {
+                                            tracing::warn!(
+                                                %peer,
+                                                limit = MAX_CONCURRENT_PROXY_SESSIONS,
+                                                "dropping SOCKS connection: proxy session limit reached"
+                                            );
+                                            continue;
+                                        }
+                                    };
                                     crate::set_nodelay(&stream);
                                     stats.accepted.fetch_add(1, Ordering::Relaxed);
                                     stats.active.fetch_add(1, Ordering::Relaxed);
@@ -90,6 +105,7 @@ impl ProxyServer {
                                     // Spawn immediately so channel opens run in parallel,
                                     // not serialized behind other SOCKS handshakes.
                                     tokio::spawn(async move {
+                                        let _permit = permit;
                                         if let Err(e) = dispatch_socks(
                                             stream,
                                             upstream.as_ref(),
@@ -118,6 +134,7 @@ impl ProxyServer {
             let upstream = Arc::clone(&upstream);
             let stats = Arc::clone(&stats);
             let shutdown = Arc::clone(&shutdown);
+            let capacity = Arc::clone(&capacity);
             tasks.push(tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -125,6 +142,17 @@ impl ProxyServer {
                         accepted = http_listener.accept() => {
                             match accepted {
                                 Ok((stream, peer)) => {
+                                    let permit = match Arc::clone(&capacity).try_acquire_owned() {
+                                        Ok(permit) => permit,
+                                        Err(_) => {
+                                            tracing::warn!(
+                                                %peer,
+                                                limit = MAX_CONCURRENT_PROXY_SESSIONS,
+                                                "dropping HTTP proxy connection: session limit reached"
+                                            );
+                                            continue;
+                                        }
+                                    };
                                     crate::set_nodelay(&stream);
                                     stats.accepted.fetch_add(1, Ordering::Relaxed);
                                     stats.active.fetch_add(1, Ordering::Relaxed);
@@ -132,6 +160,7 @@ impl ProxyServer {
                                     let stats = Arc::clone(&stats);
                                     let stats_c = Arc::clone(&stats);
                                     tokio::spawn(async move {
+                                        let _permit = permit;
                                         if let Err(e) = handle_http_connect(
                                             stream,
                                             upstream.as_ref(),

@@ -31,18 +31,26 @@ where
     stream.flush().await?;
 
     let headers = read_headers(&mut stream).await?;
-    let status = headers.lines().next().unwrap_or("").to_ascii_uppercase();
-    if !status.contains("101") {
+    let status = headers.lines().next().unwrap_or("");
+    if status.split_whitespace().nth(1) != Some("101") {
         return Err(WsError::Handshake(format!(
             "WebSocket expected 101, got {}",
             headers.lines().next().unwrap_or("empty")
         )));
     }
+    if !header_has_token(&headers, "upgrade", "websocket")
+        || !header_has_token(&headers, "connection", "upgrade")
+    {
+        return Err(WsError::Handshake(
+            "WebSocket response is missing required Upgrade headers".into(),
+        ));
+    }
     let expected = accept_key(&key);
-    if let Some(got) = header_value(&headers, "sec-websocket-accept") {
-        if !got.eq_ignore_ascii_case(&expected) {
-            return Err(WsError::Handshake("Sec-WebSocket-Accept mismatch".into()));
-        }
+    let got = header_value(&headers, "sec-websocket-accept").ok_or_else(|| {
+        WsError::Handshake("WebSocket response is missing Sec-WebSocket-Accept".into())
+    })?;
+    if !got.eq_ignore_ascii_case(&expected) {
+        return Err(WsError::Handshake("Sec-WebSocket-Accept mismatch".into()));
     }
 
     let (local, mut peer) = tokio::io::duplex(64 * 1024);
@@ -186,6 +194,14 @@ fn header_value(headers: &str, name: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn header_has_token(headers: &str, name: &str, token: &str) -> bool {
+    header_value(headers, name).is_some_and(|value| {
+        value
+            .split(',')
+            .any(|part| part.trim().eq_ignore_ascii_case(token))
+    })
 }
 
 fn base64_encode(bytes: &[u8]) -> String {

@@ -183,83 +183,116 @@ async fn handle_client(
         return Ok(());
     }
 
-    loop {
-        let frame = match recv_frame(&stream, "helper recv client request").await {
-            Ok(f) => f,
-            Err(e) if e.is_disconnect() => {
-                warn!(uid, error = %e, "client disconnected; restoring if this session owned the TUN");
-                teardown_session(&state).await;
-                break;
-            }
-            Err(e) => {
-                warn!(uid, error = %e, "helper IPC recv failed; restoring if this session owned the TUN");
-                teardown_session(&state).await;
-                break;
-            }
-        };
-        let req: HelperRequest = serde_json::from_slice(&frame.payload)?;
-        match req {
-            HelperRequest::Ping { .. } => {
-                let resp = HelperResponse::Pong {
-                    version: IPC_VERSION,
-                    uid,
-                };
-                send_json(&stream, &resp, None).await?;
-            }
-            HelperRequest::Cleanup | HelperRequest::EmergencyRestore => {
-                teardown_session(&state).await;
-                cleanup_stale().await;
-                send_json(
-                    &stream,
-                    &HelperResponse::Ok {
-                        message: "networking restored; leftover Easy Connection state removed"
-                            .into(),
-                        tun_name: None,
-                    },
-                    None,
-                )
-                .await?;
-            }
-            HelperRequest::Teardown => {
-                teardown_session(&state).await;
-                send_json(
-                    &stream,
-                    &HelperResponse::Ok {
-                        message: "tunnel networking restored".into(),
-                        tun_name: None,
-                    },
-                    None,
-                )
-                .await?;
-            }
-            HelperRequest::Apply { spec } => match apply_spec(spec, &state).await {
-                Ok((msg, tun_fd)) => {
-                    send_json(
-                        &stream,
-                        &HelperResponse::Ok {
-                            message: msg,
-                            tun_name: Some(TUN_NAME.into()),
-                        },
-                        Some(tun_fd.as_raw_fd()),
-                    )
-                    .await?;
-                    drop(tun_fd);
+    // Only the connection that successfully applied the active session owns its
+    // crash cleanup. A short-lived health-check client must never tear down a
+    // tunnel owned by another connection when it disconnects.
+    let mut owns_session = false;
+    let result: anyhow::Result<()> = async {
+        loop {
+            let frame = match recv_frame(&stream, "helper recv client request").await {
+                Ok(f) => f,
+                Err(e) if e.is_disconnect() => {
+                    if owns_session {
+                        warn!(uid, error = %e, "session owner disconnected; restoring networking");
+                    }
+                    break;
                 }
                 Err(e) => {
-                    error!(error = %e, "apply failed");
+                    if owns_session {
+                        warn!(uid, error = %e, "session owner IPC failed; restoring networking");
+                    } else {
+                        warn!(uid, error = %e, "helper client IPC failed");
+                    }
+                    break;
+                }
+            };
+            let req: HelperRequest = serde_json::from_slice(&frame.payload)?;
+            match req {
+                HelperRequest::Ping { version } if version != IPC_VERSION => {
                     send_json(
                         &stream,
                         &HelperResponse::Error {
-                            message: e.to_string(),
+                            message: format!(
+                            "helper IPC version mismatch: client {version}, helper {IPC_VERSION}"
+                        ),
                         },
                         None,
                     )
                     .await?;
                 }
-            },
+                HelperRequest::Ping { version: _ } => {
+                    let resp = HelperResponse::Pong {
+                        version: IPC_VERSION,
+                        uid,
+                    };
+                    send_json(&stream, &resp, None).await?;
+                }
+                HelperRequest::Cleanup | HelperRequest::EmergencyRestore => {
+                    teardown_session(&state).await;
+                    owns_session = false;
+                    cleanup_stale().await;
+                    send_json(
+                        &stream,
+                        &HelperResponse::Ok {
+                            message: "networking restored; leftover Easy Connection state removed"
+                                .into(),
+                            tun_name: None,
+                        },
+                        None,
+                    )
+                    .await?;
+                }
+                HelperRequest::Teardown => {
+                    teardown_session(&state).await;
+                    owns_session = false;
+                    send_json(
+                        &stream,
+                        &HelperResponse::Ok {
+                            message: "tunnel networking restored".into(),
+                            tun_name: None,
+                        },
+                        None,
+                    )
+                    .await?;
+                }
+                HelperRequest::Apply { spec } => match apply_spec(spec, &state).await {
+                    Ok((msg, tun_fd)) => {
+                        owns_session = true;
+                        send_json(
+                            &stream,
+                            &HelperResponse::Ok {
+                                message: msg,
+                                tun_name: Some(TUN_NAME.into()),
+                            },
+                            Some(tun_fd.as_raw_fd()),
+                        )
+                        .await?;
+                        drop(tun_fd);
+                    }
+                    Err(e) => {
+                        error!(error = %e, "apply failed");
+                        send_json(
+                            &stream,
+                            &HelperResponse::Error {
+                                message: e.to_string(),
+                            },
+                            None,
+                        )
+                        .await?;
+                    }
+                },
+            }
         }
+        Ok(())
     }
-    Ok(())
+    .await;
+
+    // This also covers serialization/send failures after Apply. The privileged
+    // networking state must not survive loss of its owning control connection.
+    if owns_session {
+        teardown_session(&state).await;
+    }
+    result
 }
 
 async fn send_json(

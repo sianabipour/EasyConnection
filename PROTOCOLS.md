@@ -23,7 +23,7 @@ Legend:
 | IPv6 | supported for server and forwarded destinations |
 | Routing | proxy-only (local SOCKS/HTTP) or TUN full-tunnel TCP |
 
-Full-tunnel TCP uses a userspace stack on `easy0` and SSH `direct-tcpip`. It does **not** use undocumented proprietary packet formats.
+Full-tunnel TCP is intercepted with the owned nftables table and forwarded by the local transparent proxy through SSH `direct-tcpip`. `easy0` is lifecycle-owned by the helper, but this build does not route a default route into a userspace IP stack. It does **not** use undocumented proprietary packet formats.
 
 UDP: not native to SSH. DNS/53 is carried with DNS-over-TCP (Phase 3) and optionally UDPGW (Phase 5). Arbitrary UDP uses a BadVPN UDPGW client when the remote runs a compatible daemon.
 
@@ -66,7 +66,7 @@ SSH | SOCKS | VLESS | Shadowsocks
 ```
 
 **Proprietary compatibility:** Not implemented (proprietary wire unavailable).  
-**Standards-compatible implementation:** SSH/SOCKS over standard TLS / WS / WSS / HTTP Upgrade as transport wrappers (`openssl s_client` + RFC 6455). See `crates/tls/COMPAT.md`.
+**Standards-compatible implementation:** SSH/SOCKS over standard TLS / WS / WSS / HTTP Upgrade as transport wrappers (in-process OpenSSL + RFC 6455). See `crates/tls/COMPAT.md`.
 
 ---
 
@@ -79,7 +79,7 @@ SSH | SOCKS | VLESS | Shadowsocks
 | Versions | TLS 1.2 / 1.3 (safe defaults) |
 | Verification | ON by default |
 | Fingerprint profiles | Default / Chrome / Firefox / Safari / Custom (ALPN hint only) |
-| Implementation | system `openssl s_client` (not rustls JA3 impersonation) |
+| Implementation | in-process OpenSSL via Rust bindings (not JA3 impersonation) |
 
 Fingerprint profiles never imply “skip verify”. Chrome/Firefox/Safari only add `http/1.1` for WSS / HTTP Upgrade when the user left ALPN empty. SSH-over-TLS keeps ALPN empty unless the user set it.
 
@@ -104,14 +104,14 @@ Fingerprint profiles never imply “skip verify”. Chrome/Firefox/Safari only a
 | Aspect | Behavior |
 |--------|----------|
 | Identity | UUID |
-| Encryption / Flow | `none` only. `xtls-rprx-vision` / XTLS are rejected |
-| Transports | Direct, TLS, WS, WSS, HTTP Upgrade |
-| Config fields | UUID, server, port, encryption, flow, transport, host, path, SNI, ALPN, fingerprint |
+| Encryption / Flow | `none`; Vision is delegated to the external engine |
+| Transports | TCP, TLS, Reality, WS/WSS, gRPC, HTTP Upgrade; XHTTP with Xray |
+| Config fields | UUID, server, port, encryption, flow, network, security, host/path, Reality and gRPC/XHTTP fields |
+| Engine | External Xray first, then sing-box in automatic mode |
 
 UI shows only settings valid for the selected transport.
 
-**Proprietary:** N/A beyond branding.  
-**Standards-compatible:** Implemented (Phase 6) for the public VLESS TCP header. See `crates/vless/COMPAT.md`.
+`rt-vless` is now a process/config/SOCKS adapter rather than a second VLESS implementation. This keeps protocol compatibility in maintained upstream engines. The app currently exposes TCP streams; VLESS UDP and engine mux controls are not exposed. See `crates/vless/COMPAT.md`.
 
 ---
 

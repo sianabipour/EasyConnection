@@ -60,9 +60,24 @@ AppImage is the GUI. Privileged networking is a host systemd service. Install th
 
 Expected. The Flatpak sandbox cannot hold `CAP_NET_ADMIN`. Use it for local SOCKS/HTTP only, or talk to a **host** helper by installing the `.deb` and allowing `/run/easy` in the Flatpak finish args (see `packaging/flatpak/README.md`).
 
-## `openssl s_client` / TLS transport errors
+## OpenSSL / TLS transport errors
 
-TLS, WSS, and SSH-over-TLS spawn system `openssl s_client`. Install `openssl`. Fingerprint profiles only set ALPN — they are not JA3.
+TLS, WSS, and SSH-over-TLS use OpenSSL in-process. Ensure the package's `libssl` dependency is installed. Fingerprint profiles only set ALPN — they are not JA3.
+
+## Imported VLESS profile does not connect
+
+Easy Connection delegates VLESS to Xray or sing-box. Confirm at least one is installed:
+
+```bash
+xray version
+sing-box version
+```
+
+Automatic mode tries Xray first. Set `EASY_VLESS_ENGINE=xray` or
+`EASY_VLESS_ENGINE=sing-box` to diagnose one engine, and use `EASY_XRAY_PATH`
+or `EASY_SING_BOX_PATH` when the binary is outside `PATH`. XHTTP and
+`xtls-rprx-vision-udp443` require Xray. A missing/invalid engine is reported as
+a connection error instead of terminating the app.
 
 ## Desktop will not build
 

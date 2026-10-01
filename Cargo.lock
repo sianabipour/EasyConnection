@@ -4364,7 +4364,7 @@ dependencies = [
  "async-trait",
  "rt-config",
  "rt-socks",
- "rt-tls",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

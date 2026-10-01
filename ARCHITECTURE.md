@@ -38,8 +38,8 @@ Tunnel Engine (crates/tunnel)
     +---- SSH Adapter           (crates/ssh)
     +---- SOCKS Adapter         (crates/socks)
     +---- Shadowsocks Adapter   (crates/shadowsocks)
-    +---- VLESS Adapter         (crates/vless)
-    +---- TLS/XTLS Transport    (crates/tls)
+    +---- VLESS Engine Adapter  (crates/vless → Xray/sing-box)
+    +---- TLS Transport         (crates/tls; SSH/Shadowsocks)
     +---- WebSocket Adapter     (crates/websocket)
     +---- HTTP Upgrade Adapter  (crates/websocket / http-upgrade)
     +---- UDPGW Adapter         (crates/udpgw)
@@ -132,10 +132,10 @@ App → kernel stack → TUN easy0 → userspace packet IO
 | Area | Choice | Notes |
 |------|--------|-------|
 | SSH | `russh` | modern async SSH; optional exit zones via `ZoneProvider` (`docs/ZONES.md`) |
-| TLS | system `openssl s_client` | verify by default; fingerprint = ALPN only |
+| TLS | OpenSSL via `openssl` + `tokio-openssl` | in-process; verify by default; fingerprint = ALPN only |
 | SOCKS | custom + `tokio` | SOCKS4/4a/5 + HTTP CONNECT |
 | Shadowsocks | `rt-shadowsocks` | SIP004 AEAD TCP (`aes-128-gcm` / `aes-256-gcm`) |
-| VLESS | `rt-vless` | public UUID TCP header; encryption=none |
+| VLESS | `rt-vless` | lifecycle/config adapter for Xray or sing-box via private loopback SOCKS |
 | TUN | `tun` / netlink | Linux only |
 | nftables | `nftables` CLI via typed args or libnftnl later | no shell concatenation |
 | SQLite | `rusqlite` / `sqlx` | migrations |

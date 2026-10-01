@@ -72,7 +72,17 @@ impl HelperClient {
                 false,
             )
             .await?;
-        Ok(resp)
+        match resp {
+            HelperResponse::Pong { version, uid } if version == IPC_VERSION => {
+                Ok(HelperResponse::Pong { version, uid })
+            }
+            HelperResponse::Pong { version, .. } => Err(TunError::Ipc(format!(
+                "helper IPC version mismatch: client {IPC_VERSION}, helper {version}"
+            ))),
+            other => Err(TunError::Ipc(format!(
+                "helper returned an unexpected Ping response: {other:?}"
+            ))),
+        }
     }
 
     pub async fn cleanup(&self) -> Result<String> {

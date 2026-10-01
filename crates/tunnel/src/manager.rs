@@ -385,7 +385,8 @@ async fn open_upstream(
             Ok((None, Arc::new(c)))
         }
         Protocol::Vless => {
-            let c = VlessConnector::from_profile(profile)
+            let c = VlessConnector::start(profile)
+                .await
                 .map_err(|e| TunnelError::Other(e.to_string()))?;
             Ok((None, Arc::new(c)))
         }

@@ -662,6 +662,7 @@ pub fn update_ssh_profile(
             flow: fl,
             host: vhost,
             path,
+            ..
         } => {
             if let Some(u) = uuid {
                 *id = u;
