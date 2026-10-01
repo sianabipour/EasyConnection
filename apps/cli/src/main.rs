@@ -359,14 +359,14 @@ async fn main() -> Result<()> {
         } => {
             let mut cfg = ConnectionConfig::new_vless(name, host, port, uuid);
             apply_shared(&mut cfg, &shared)?;
-            if let ProtocolSettings::Vless {
-                encryption: enc,
-                flow: fl,
-                host: vhost,
-                path,
-                ..
-            } = &mut cfg.settings
-            {
+            if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                let rt_config::VlessSettings {
+                    encryption: enc,
+                    flow: fl,
+                    host: vhost,
+                    path,
+                    ..
+                } = settings.as_mut();
                 *enc = encryption;
                 *fl = flow;
                 *vhost = cfg.tls.host.clone();

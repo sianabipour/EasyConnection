@@ -210,33 +210,36 @@ async fn write_engine_config(kind: EngineKind, value: &Value) -> Result<Temporar
 
 fn vless_settings(cfg: &ConnectionConfig) -> Result<VlessSettings<'_>> {
     match &cfg.settings {
-        ProtocolSettings::Vless {
-            uuid,
-            encryption,
-            flow,
-            network,
-            security,
-            host,
-            path,
-            reality_public_key,
-            reality_short_id,
-            grpc_service_name,
-            xhttp_mode,
-            spider_x,
-        } => Ok(VlessSettings {
-            uuid,
-            encryption,
-            flow,
-            network,
-            security,
-            host: host.as_deref().or(cfg.tls.host.as_deref()),
-            path: path.as_deref().or(cfg.tls.path.as_deref()),
-            reality_public_key: reality_public_key.as_deref(),
-            reality_short_id: reality_short_id.as_deref(),
-            grpc_service_name: grpc_service_name.as_deref(),
-            xhttp_mode: xhttp_mode.as_deref(),
-            spider_x: spider_x.as_deref(),
-        }),
+        ProtocolSettings::Vless(settings) => {
+            let rt_config::VlessSettings {
+                uuid,
+                encryption,
+                flow,
+                network,
+                security,
+                host,
+                path,
+                reality_public_key,
+                reality_short_id,
+                grpc_service_name,
+                xhttp_mode,
+                spider_x,
+            } = settings.as_ref();
+            Ok(VlessSettings {
+                uuid,
+                encryption,
+                flow,
+                network,
+                security,
+                host: host.as_deref().or(cfg.tls.host.as_deref()),
+                path: path.as_deref().or(cfg.tls.path.as_deref()),
+                reality_public_key: reality_public_key.as_deref(),
+                reality_short_id: reality_short_id.as_deref(),
+                grpc_service_name: grpc_service_name.as_deref(),
+                xhttp_mode: xhttp_mode.as_deref(),
+                spider_x: spider_x.as_deref(),
+            })
+        }
         _ => Err(VlessError::Config("not a VLESS profile".into())),
     }
 }
@@ -641,7 +644,8 @@ mod tests {
     #[test]
     fn sing_box_rejects_xhttp() {
         let mut cfg = profile();
-        if let ProtocolSettings::Vless { network, .. } = &mut cfg.settings {
+        if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+            let rt_config::VlessSettings { network, .. } = settings.as_mut();
             *network = "xhttp".into();
         }
         assert!(build_sing_box_config(&cfg, 32123).is_err());

@@ -115,24 +115,28 @@ fn parse_vless(raw: &str) -> Result<ParsedImport> {
     for (k, v) in &pairs {
         match k.to_ascii_lowercase().as_str() {
             "encryption" => {
-                if let ProtocolSettings::Vless { encryption, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { encryption, .. } = settings.as_mut();
                     *encryption = v.clone();
                 }
             }
             "flow" => {
-                if let ProtocolSettings::Vless { flow, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { flow, .. } = settings.as_mut();
                     *flow = v.clone();
                 }
             }
             "path" => {
                 cfg.tls.path = Some(v.clone());
-                if let ProtocolSettings::Vless { path, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { path, .. } = settings.as_mut();
                     *path = Some(v.clone());
                 }
             }
             "host" => {
                 cfg.tls.host = Some(v.clone());
-                if let ProtocolSettings::Vless { host, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { host, .. } = settings.as_mut();
                     *host = Some(v.clone());
                 }
             }
@@ -147,12 +151,14 @@ fn parse_vless(raw: &str) -> Result<ParsedImport> {
                 };
             }
             "security" => {
-                if let ProtocolSettings::Vless { security, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { security, .. } = settings.as_mut();
                     *security = v.to_ascii_lowercase();
                 }
             }
             "type" | "net" => {
-                if let ProtocolSettings::Vless { network, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { network, .. } = settings.as_mut();
                     *network = match v.to_ascii_lowercase().as_str() {
                         "raw" | "none" | "" => "tcp".into(),
                         "websocket" => "ws".into(),
@@ -162,36 +168,38 @@ fn parse_vless(raw: &str) -> Result<ParsedImport> {
                 }
             }
             "pbk" | "publickey" | "password" => {
-                if let ProtocolSettings::Vless {
-                    reality_public_key, ..
-                } = &mut cfg.settings
-                {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings {
+                        reality_public_key, ..
+                    } = settings.as_mut();
                     *reality_public_key = Some(v.clone());
                 }
             }
             "sid" | "shortid" => {
-                if let ProtocolSettings::Vless {
-                    reality_short_id, ..
-                } = &mut cfg.settings
-                {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings {
+                        reality_short_id, ..
+                    } = settings.as_mut();
                     *reality_short_id = Some(v.clone());
                 }
             }
             "servicename" => {
-                if let ProtocolSettings::Vless {
-                    grpc_service_name, ..
-                } = &mut cfg.settings
-                {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings {
+                        grpc_service_name, ..
+                    } = settings.as_mut();
                     *grpc_service_name = Some(v.clone());
                 }
             }
             "mode" => {
-                if let ProtocolSettings::Vless { xhttp_mode, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { xhttp_mode, .. } = settings.as_mut();
                     *xhttp_mode = Some(v.clone());
                 }
             }
             "spx" | "spiderx" => {
-                if let ProtocolSettings::Vless { spider_x, .. } = &mut cfg.settings {
+                if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+                    let crate::VlessSettings { spider_x, .. } = settings.as_mut();
                     *spider_x = Some(v.clone());
                 }
             }
@@ -210,9 +218,9 @@ fn parse_vless(raw: &str) -> Result<ParsedImport> {
     }
 
     let (security, network) = match &cfg.settings {
-        ProtocolSettings::Vless {
-            security, network, ..
-        } => (security.as_str(), network.as_str()),
+        ProtocolSettings::Vless(settings) => {
+            (settings.security.as_str(), settings.network.as_str())
+        }
         _ => unreachable!(),
     };
     let uses_tls = match security {
@@ -390,12 +398,13 @@ mod tests {
     fn accepts_reality_and_grpc_variants() {
         let reality = parse_import("vless://00000000-0000-0000-0000-000000000000@example.com:443?security=reality&type=tcp&sni=cdn.example.com&pbk=public-key&sid=0123").unwrap();
         match reality.config.settings {
-            ProtocolSettings::Vless {
-                security,
-                reality_public_key,
-                reality_short_id,
-                ..
-            } => {
+            ProtocolSettings::Vless(settings) => {
+                let crate::VlessSettings {
+                    security,
+                    reality_public_key,
+                    reality_short_id,
+                    ..
+                } = *settings;
                 assert_eq!(security, "reality");
                 assert_eq!(reality_public_key.as_deref(), Some("public-key"));
                 assert_eq!(reality_short_id.as_deref(), Some("0123"));
@@ -405,11 +414,12 @@ mod tests {
 
         let grpc = parse_import("vless://00000000-0000-0000-0000-000000000000@example.com:443?type=grpc&security=tls&serviceName=edge").unwrap();
         match grpc.config.settings {
-            ProtocolSettings::Vless {
-                network,
-                grpc_service_name,
-                ..
-            } => {
+            ProtocolSettings::Vless(settings) => {
+                let crate::VlessSettings {
+                    network,
+                    grpc_service_name,
+                    ..
+                } = *settings;
                 assert_eq!(network, "grpc");
                 assert_eq!(grpc_service_name.as_deref(), Some("edge"));
             }

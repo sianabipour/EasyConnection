@@ -93,9 +93,8 @@ pub fn validate_connection(cfg: &ConnectionConfig) -> Result<()> {
                 )));
             }
         }
-        (
-            Protocol::Vless,
-            ProtocolSettings::Vless {
+        (Protocol::Vless, ProtocolSettings::Vless(settings)) => {
+            let VlessSettings {
                 uuid,
                 encryption,
                 flow,
@@ -104,8 +103,7 @@ pub fn validate_connection(cfg: &ConnectionConfig) -> Result<()> {
                 reality_public_key,
                 reality_short_id,
                 ..
-            },
-        ) => {
+            } = settings.as_ref();
             if Uuid::parse_str(uuid).is_err() {
                 return Err(ConfigError::Validation(
                     "VLESS uuid must be a valid UUID".into(),
@@ -327,7 +325,8 @@ mod tests {
             443,
             "00000000-0000-0000-0000-000000000000",
         );
-        if let ProtocolSettings::Vless { flow, security, .. } = &mut cfg.settings {
+        if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+            let crate::VlessSettings { flow, security, .. } = settings.as_mut();
             *flow = "xtls-rprx-vision".into();
             *security = "tls".into();
         }
@@ -342,7 +341,8 @@ mod tests {
             443,
             "00000000-0000-0000-0000-000000000000",
         );
-        if let ProtocolSettings::Vless { flow, .. } = &mut cfg.settings {
+        if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+            let crate::VlessSettings { flow, .. } = settings.as_mut();
             *flow = "some-future-flow".into();
         }
         assert!(validate_connection(&cfg).is_err());

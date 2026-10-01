@@ -114,33 +114,38 @@ pub enum ProtocolSettings {
     Shadowsocks {
         method: String,
     },
-    Vless {
-        uuid: String,
-        #[serde(default)]
-        encryption: String,
-        #[serde(default)]
-        flow: String,
-        /// VLESS transport as named by share links: tcp, ws, grpc, httpupgrade, or xhttp.
-        #[serde(default = "default_vless_network")]
-        network: String,
-        /// none, tls, or reality.
-        #[serde(default = "default_vless_security")]
-        security: String,
-        #[serde(default)]
-        host: Option<String>,
-        #[serde(default)]
-        path: Option<String>,
-        #[serde(default)]
-        reality_public_key: Option<String>,
-        #[serde(default)]
-        reality_short_id: Option<String>,
-        #[serde(default)]
-        grpc_service_name: Option<String>,
-        #[serde(default)]
-        xhttp_mode: Option<String>,
-        #[serde(default)]
-        spider_x: Option<String>,
-    },
+    Vless(Box<VlessSettings>),
+}
+
+/// VLESS settings live behind one pointer to keep other protocol profiles compact.
+/// Serde retains the existing internally tagged, flat JSON representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VlessSettings {
+    pub uuid: String,
+    #[serde(default)]
+    pub encryption: String,
+    #[serde(default)]
+    pub flow: String,
+    /// VLESS transport as named by share links: tcp, ws, grpc, httpupgrade, or xhttp.
+    #[serde(default = "default_vless_network")]
+    pub network: String,
+    /// none, tls, or reality.
+    #[serde(default = "default_vless_security")]
+    pub security: String,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub reality_public_key: Option<String>,
+    #[serde(default)]
+    pub reality_short_id: Option<String>,
+    #[serde(default)]
+    pub grpc_service_name: Option<String>,
+    #[serde(default)]
+    pub xhttp_mode: Option<String>,
+    #[serde(default)]
+    pub spider_x: Option<String>,
 }
 
 fn default_vless_network() -> String {
@@ -457,7 +462,7 @@ impl ConnectionConfig {
             udpgw: UdpgwSettings::default(),
             tls: TlsSettings::default(),
             proxy: ProxyShareSettings::default(),
-            settings: ProtocolSettings::Vless {
+            settings: ProtocolSettings::Vless(Box::new(VlessSettings {
                 uuid: uuid.into(),
                 encryption: "none".into(),
                 flow: String::new(),
@@ -470,7 +475,7 @@ impl ConnectionConfig {
                 grpc_service_name: None,
                 xhttp_mode: None,
                 spider_x: None,
-            },
+            })),
             bypass_private_networks: true,
             kill_switch: false,
             split_bypass_cidrs: Vec::new(),
@@ -537,6 +542,49 @@ impl Default for AppSettings {
             reconnect_max_delay_ms: 60_000,
             log_level: "info".into(),
             preferred_routing_mode: default_preferred_routing_mode(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod vless_schema_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_flat_vless_settings_roundtrip() {
+        let legacy = serde_json::json!({
+            "protocol": "vless",
+            "uuid": "00000000-0000-0000-0000-000000000000",
+            "encryption": "none",
+            "flow": "xtls-rprx-vision",
+            "network": "tcp",
+            "security": "reality",
+            "host": "cdn.example.com",
+            "path": "/edge",
+            "reality_public_key": "public-key",
+            "reality_short_id": "0123",
+            "grpc_service_name": "edge",
+            "xhttp_mode": "auto",
+            "spider_x": "/"
+        });
+        let settings: ProtocolSettings = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&settings).unwrap(), legacy);
+    }
+
+    #[test]
+    fn legacy_minimal_vless_settings_keep_defaults() {
+        let settings: ProtocolSettings = serde_json::from_value(serde_json::json!({
+            "protocol": "vless",
+            "uuid": "00000000-0000-0000-0000-000000000000"
+        }))
+        .unwrap();
+        match settings {
+            ProtocolSettings::Vless(settings) => {
+                assert_eq!(settings.network, "tcp");
+                assert_eq!(settings.security, "none");
+                assert!(settings.reality_public_key.is_none());
+            }
+            _ => panic!("expected VLESS settings"),
         }
     }
 }

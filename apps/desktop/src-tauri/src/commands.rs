@@ -63,16 +63,11 @@ pub struct ProxyDto {
 fn to_dto(cfg: &ConnectionConfig) -> ProfileDto {
     let (ss_method, vless_uuid, vless_encryption, vless_flow) = match &cfg.settings {
         ProtocolSettings::Shadowsocks { method } => (Some(method.clone()), None, None, None),
-        ProtocolSettings::Vless {
-            uuid,
-            encryption,
-            flow,
-            ..
-        } => (
+        ProtocolSettings::Vless(settings) => (
             None,
-            Some(uuid.clone()),
-            Some(encryption.clone()),
-            Some(flow.clone()),
+            Some(settings.uuid.clone()),
+            Some(settings.encryption.clone()),
+            Some(settings.flow.clone()),
         ),
         _ => (None, None, None, None),
     };
@@ -463,14 +458,14 @@ pub fn add_vless_profile(
         tls_path,
         tls_host,
     )?;
-    if let ProtocolSettings::Vless {
-        encryption: enc,
-        flow: fl,
-        host: vhost,
-        path,
-        ..
-    } = &mut cfg.settings
-    {
+    if let ProtocolSettings::Vless(settings) = &mut cfg.settings {
+        let rt_config::VlessSettings {
+            encryption: enc,
+            flow: fl,
+            host: vhost,
+            path,
+            ..
+        } = settings.as_mut();
         if let Some(e) = encryption {
             *enc = e;
         }
@@ -656,14 +651,15 @@ pub fn update_ssh_profile(
                 *m = next;
             }
         }
-        ProtocolSettings::Vless {
-            uuid: id,
-            encryption: enc,
-            flow: fl,
-            host: vhost,
-            path,
-            ..
-        } => {
+        ProtocolSettings::Vless(settings) => {
+            let rt_config::VlessSettings {
+                uuid: id,
+                encryption: enc,
+                flow: fl,
+                host: vhost,
+                path,
+                ..
+            } = settings.as_mut();
             if let Some(u) = uuid {
                 *id = u;
             }
