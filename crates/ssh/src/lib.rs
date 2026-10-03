@@ -1,8 +1,8 @@
 //! SSH-2 adapter using `russh`.
 //!
-//! Standards-compatible SSH tunneling. Optional exit zones use the
-//! plaintext smart-config HTTP contract in `docs/ZONES.md`. The encrypted
-//! smart-config blob is not implemented.
+//! Standards-compatible SSH tunneling. RocketTunnel Smart Config zone-list
+//! previews use a separate HTTP contract; selecting an exit for SSH Direct is
+//! not implemented. See `docs/ZONES.md`.
 
 mod error;
 mod host_key;

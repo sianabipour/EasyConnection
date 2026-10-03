@@ -2,8 +2,6 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useConnection } from "../hooks/useConnection";
 import { api } from "../lib/api";
-import type { ZoneInfo } from "../lib/types";
-import { ZonePicker } from "./ZonePicker";
 import type {
   DnsMode,
   FingerprintKind,
@@ -69,10 +67,7 @@ export function AddConnectionPage() {
   const [tlsVerify, setTlsVerify] = useState(true);
   const [fingerprint, setFingerprint] = useState<FingerprintKind>("default");
   const [loading, setLoading] = useState(editing);
-  const [zones, setZones] = useState<ZoneInfo[]>([]);
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
-  const [zonesLoading, setZonesLoading] = useState(false);
-  const [zonesError, setZonesError] = useState<string | null>(null);
   const [defaults, setDefaults] = useState({
     name: "",
     host: "",
@@ -123,28 +118,7 @@ export function AddConnectionPage() {
         setUdpgw(Boolean(profile.udpgw_enabled));
         setTlsVerify(profile.tls_verify !== false);
         setFingerprint(asFingerprint(profile.tls_fingerprint));
-        setZones(profile.zones || []);
         setSelectedZone(profile.selected_zone || null);
-        if (asProtocol(profile.protocol) === "ssh") {
-          setZonesLoading(true);
-          setZonesError(null);
-          void api
-            .fetchZones(id)
-            .then((fresh) => {
-              if (cancelled) return;
-              setZones(fresh.zones || []);
-              setSelectedZone(fresh.selected_zone || null);
-              void refresh();
-            })
-            .catch((err: unknown) => {
-              if (!cancelled) {
-                setZonesError(err instanceof Error ? err.message : String(err));
-              }
-            })
-            .finally(() => {
-              if (!cancelled) setZonesLoading(false);
-            });
-        }
         setDefaults({
           name: profile.name,
           host: profile.host,
@@ -196,37 +170,16 @@ export function AddConnectionPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, getProfile, refresh]);
+  }, [id, getProfile]);
 
-  async function loadZones() {
+  async function clearLegacyZone() {
     if (!id) return;
-    setZonesLoading(true);
-    setZonesError(null);
     try {
-      const profile = await api.fetchZones(id);
-      setZones(profile.zones || []);
-      setSelectedZone(profile.selected_zone || null);
-      await refresh();
-      if (!profile.zones || profile.zones.length === 0) {
-        setZonesError("Could not load zones. Check connection and try again.");
-      }
-    } catch (err) {
-      setZonesError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setZonesLoading(false);
-    }
-  }
-
-  async function chooseZone(zoneId: string | null) {
-    if (!id) return;
-    setSelectedZone(zoneId);
-    try {
-      const profile = await api.setSelectedZone(id, zoneId);
-      setSelectedZone(profile.selected_zone || null);
-      setZones(profile.zones || zones);
+      await api.setSelectedZone(id, null);
+      setSelectedZone(null);
       await refresh();
     } catch (err) {
-      setZonesError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -446,21 +399,18 @@ export function AddConnectionPage() {
           Proxy vs VPN / tunnel mode is chosen on the Home dashboard before Connect — not in this form.
         </p>
 
-        {protocol === "ssh" && editing && id && (
-          <ZonePicker
-            zones={zones}
-            selectedId={selectedZone}
-            loading={zonesLoading}
-            error={zonesError}
-            onReload={() => void loadZones()}
-            onSelect={(zoneId) => void chooseZone(zoneId)}
-          />
-        )}
-
-        {protocol === "ssh" && !editing && (
-          <p className="text-xs text-[var(--color-muted)]">
-            Save this SSH profile, then open it again to load exit countries from the entry host.
-          </p>
+        {protocol === "ssh" && (
+          <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4 text-sm text-[var(--color-muted)]">
+            SSH Direct uses the server's automatic exit. RocketTunnel's country picker belongs to a separate Smart Config link, not this SSH port.
+            {selectedZone && editing && id && (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <span role="status">Old zone {selectedZone} is unsupported and blocks Connect.</span>
+                <button type="button" onClick={() => void clearLegacyZone()} className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-white hover:bg-[var(--color-panel-2)]">
+                  Clear old zone
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {protocol === "ssh" && (

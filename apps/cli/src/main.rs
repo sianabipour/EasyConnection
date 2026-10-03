@@ -137,12 +137,14 @@ enum Commands {
     /// Connect a profile and keep proxies running until Ctrl-C
     Connect {
         id: Uuid,
-        /// Zone id from `fetch-zones`, or `auto` for the server default
+        /// `auto` clears an old saved zone; plain SSH does not support forced zones
         #[arg(long)]
         zone: Option<String>,
     },
-    /// Fetch exit countries/zones for an SSH-direct profile
+    /// Explain why a plain SSH profile has no Smart Config zone endpoint
     FetchZones { id: Uuid },
+    /// Preview zones from a RocketTunnel /i/ link in a local file (no import/connect)
+    PreviewSmartZones { source: PathBuf },
     /// Show connection snapshot JSON
     Status,
     /// DNS / IPv6 leak report (needs a live tunnel for full results)
@@ -381,6 +383,11 @@ async fn main() -> Result<()> {
                 .await
                 .with_context(|| "could not load zones")?;
             println!("{}", serde_json::to_string_pretty(&cache)?);
+        }
+        Commands::PreviewSmartZones { source } => {
+            let link = std::fs::read_to_string(source)?;
+            let zones = controller.preview_smart_zones(&link).await?;
+            println!("{}", serde_json::to_string_pretty(&zones)?);
         }
         Commands::Connect { id, zone } => {
             if let Some(zone) = zone {

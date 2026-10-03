@@ -4130,6 +4130,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "directories",
+ "flate2",
  "ipnet",
  "rt-secrets",
  "rusqlite",
@@ -4141,6 +4142,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

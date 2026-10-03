@@ -1,11 +1,10 @@
-//! SSH-direct exit zones.
+//! Smart Config zone-list HTTP requests.
 //!
 //! Wire format recovered from RocketTunnel 3.0.8 (`com.hypertunnel.android`):
-//! the zone list is a plaintext JSON command, and the chosen id is the
-//! `X-Zone-Id` header on the entry host's smart-config HTTP GET.
-//! The SSH username is not rewritten. See `docs/ZONES.md`.
+//! the zone list is a plaintext JSON command to a Smart Config host, and the
+//! chosen id is the `X-Zone-Id` header on its encrypted config GET.
+//! A plain SSH port does not provide this API. See `docs/ZONES.md`.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,6 +14,7 @@ use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{Result, SshError};
 
@@ -23,14 +23,24 @@ const DEFAULT_PATH: &str = "/";
 const MAX_BODY: usize = 1024 * 1024;
 
 /// Listing request. Credentials stay in memory for the HTTP body only.
-#[derive(Debug, Clone)]
 pub struct ZoneFetchRequest {
     pub host: String,
     pub port: u16,
     pub username: String,
     pub password: String,
     pub path: String,
+    /// From the Smart Config host's explicit HTTP/HTTPS flag.
+    pub https: bool,
     pub timeout: Duration,
+}
+
+impl Drop for ZoneFetchRequest {
+    fn drop(&mut self) {
+        self.host.zeroize();
+        self.username.zeroize();
+        self.password.zeroize();
+        self.path.zeroize();
+    }
 }
 
 impl ZoneFetchRequest {
@@ -39,13 +49,16 @@ impl ZoneFetchRequest {
         port: u16,
         username: impl Into<String>,
         password: impl Into<String>,
+        path: impl Into<String>,
+        https: bool,
     ) -> Self {
         Self {
             host: host.into(),
             port,
             username: username.into(),
             password: password.into(),
-            path: DEFAULT_PATH.into(),
+            path: path.into(),
+            https,
             timeout: Duration::from_secs(15),
         }
     }
@@ -55,21 +68,14 @@ impl ZoneFetchRequest {
 pub struct ZoneList {
     pub hash: Option<String>,
     pub zones: Vec<ZoneInfo>,
-    /// True when this list was read with HTTPS on the profile port.
+    /// True when this list was read from an HTTPS Smart Config host.
     pub https: bool,
 }
 
-/// How a client obtains and applies zones. Tunnel/core depend on this, not on a UI.
+/// How the controller obtains the provider's Smart Config zone list.
 #[async_trait]
 pub trait ZoneProvider: Send + Sync {
     async fn fetch_zones(&self, req: ZoneFetchRequest) -> Result<ZoneList>;
-    async fn signal_selected_zone(
-        &self,
-        host: &str,
-        port: u16,
-        zone_id: &str,
-        https: bool,
-    ) -> Result<()>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -78,111 +84,41 @@ pub struct HttpZoneProvider;
 #[async_trait]
 impl ZoneProvider for HttpZoneProvider {
     async fn fetch_zones(&self, req: ZoneFetchRequest) -> Result<ZoneList> {
-        if tcp_speaks_ssh(&req.host, req.port).await {
-            return zones_from_ssh_banner(&req).await;
+        let body = Zeroizing::new(zone_command_body(&req.username, &req.password));
+        let request = Zeroizing::new(http_request(&ZoneHttpRequest {
+            method: "POST",
+            host: &req.host,
+            port: req.port,
+            path: &req.path,
+            content_type: Some("application/json"),
+            zone_id: None,
+            body: Some(body.as_bytes()),
+            https: req.https,
+        }));
+        let attempt = ZoneAttempt { https: req.https };
+        let response = exchange_attempt(
+            &req.host,
+            req.port,
+            attempt,
+            request.as_bytes(),
+            req.timeout.min(Duration::from_secs(8)),
+        )
+        .await?;
+        if response.body.starts_with(b"SSH-") {
+            return Err(SshError::Zones(
+                "This port speaks SSH. Country lists require a Smart Config zone host, not an SSH Direct port."
+                    .into(),
+            ));
         }
-        let body = zone_command_body(&req.username, &req.password);
-        let mut errors = Vec::new();
-        for attempt in zone_attempts(None) {
-            let request = http_request(&ZoneHttpRequest {
-                method: "POST",
-                host: &req.host,
-                port: req.port,
-                path: &req.path,
-                content_type: Some("application/json"),
-                zone_id: None,
-                body: Some(body.as_bytes()),
-                https: attempt.https,
-            });
-            match exchange_attempt(
-                &req.host,
-                req.port,
-                attempt,
-                request.as_bytes(),
-                req.timeout.min(Duration::from_secs(8)),
-            )
-            .await
-            {
-                Ok(response) if response.body.starts_with(b"SSH-") => {
-                    return Err(SshError::Zones(
-                        "This port speaks SSH, so it has no country list. The phone loads countries with an HTTP request to a smart-config host that has the zone flag, and this profile only has the SSH address.".into(),
-                    ));
-                }
-                Ok(response) if (200..300).contains(&response.status) => {
-                    match parse_zone_list(&response.body) {
-                        Ok(mut list) => {
-                            list.https = attempt.https;
-                            return Ok(list);
-                        }
-                        Err(err) => errors.push(format!("{}: {err}", attempt.label())),
-                    }
-                }
-                Ok(response) => {
-                    errors.push(format!("{}: HTTP {}", attempt.label(), response.status))
-                }
-                Err(err) => errors.push(format!("{}: {err}", attempt.label())),
-            }
+        if !(200..300).contains(&response.status) {
+            return Err(SshError::Zones(format!(
+                "Could not load zones. Smart Config host returned HTTP {}.",
+                response.status
+            )));
         }
-        Err(SshError::Zones(format!(
-            "Could not load zones. Check connection and try again. ({})",
-            errors.join("; ")
-        )))
-    }
-
-    async fn signal_selected_zone(
-        &self,
-        host: &str,
-        port: u16,
-        zone_id: &str,
-        https: bool,
-    ) -> Result<()> {
-        let zone_id = zone_id.trim();
-        if zone_id.is_empty() {
-            return Ok(());
-        }
-        let mut last_err = None;
-        for attempt in zone_attempts(Some(https)) {
-            let request = http_request(&ZoneHttpRequest {
-                method: "GET",
-                host,
-                port,
-                path: DEFAULT_PATH,
-                content_type: None,
-                zone_id: Some(zone_id),
-                body: None,
-                https: attempt.https,
-            });
-            match exchange_attempt(
-                host,
-                port,
-                attempt,
-                request.as_bytes(),
-                Duration::from_secs(8),
-            )
-            .await
-            {
-                Ok(response) if response.body.starts_with(b"SSH-") || response.status == 0 => {
-                    last_err = Some(SshError::Zones(
-                        "entry host did not answer the zone HTTP request".into(),
-                    ));
-                }
-                Ok(response) => {
-                    tracing::info!(
-                        host,
-                        port,
-                        status = response.status,
-                        zone_id,
-                        https = attempt.https,
-                        "signaled selected zone"
-                    );
-                    return Ok(());
-                }
-                Err(err) => last_err = Some(err),
-            }
-        }
-        Err(last_err.unwrap_or_else(|| {
-            SshError::Zones("entry host did not answer the zone HTTP request".into())
-        }))
+        let mut list = parse_zone_list(&response.body)?;
+        list.https = req.https;
+        Ok(list)
     }
 }
 
@@ -224,7 +160,11 @@ pub fn http_request(req: &ZoneHttpRequest<'_>) -> String {
         "{method} {path} HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\n",
         method = req.method,
     );
-    if let Some(id) = req.zone_id.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(id) = req
+        .zone_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.bytes().all(|byte| byte.is_ascii_graphic()))
+    {
         out.push_str("X-Zone-Id: ");
         out.push_str(id);
         out.push_str("\r\n");
@@ -260,206 +200,6 @@ fn host_header(host: &str, port: u16, https: bool) -> String {
 #[derive(Clone, Copy)]
 struct ZoneAttempt {
     https: bool,
-    verify: bool,
-}
-
-impl ZoneAttempt {
-    fn label(self) -> &'static str {
-        match (self.https, self.verify) {
-            (true, true) => "https",
-            (true, false) => "https-insecure",
-            (false, _) => "http",
-        }
-    }
-}
-
-/// RocketTunnel picks `http://` or `https://` from the host flag and keeps the
-/// host's own port. An SSH profile has no flag, so try TLS first (the smart
-/// flowgraph's `tls` node uses ALPN `http/1.1`), then cleartext HTTP.
-fn zone_attempts(https: Option<bool>) -> Vec<ZoneAttempt> {
-    match https {
-        Some(true) => vec![
-            ZoneAttempt {
-                https: true,
-                verify: true,
-            },
-            ZoneAttempt {
-                https: true,
-                verify: false,
-            },
-        ],
-        Some(false) => vec![ZoneAttempt {
-            https: false,
-            verify: false,
-        }],
-        // The phone's zone client writes cleartext HTTP. Try that before TLS so an
-        // OpenSSH banner is recognized immediately instead of waiting out TLS timeouts.
-        None => vec![
-            ZoneAttempt {
-                https: false,
-                verify: false,
-            },
-            ZoneAttempt {
-                https: true,
-                verify: true,
-            },
-            ZoneAttempt {
-                https: true,
-                verify: false,
-            },
-        ],
-    }
-}
-
-pub(crate) async fn tcp_speaks_ssh(host: &str, port: u16) -> bool {
-    let Ok(Ok(mut stream)) =
-        timeout(Duration::from_secs(5), TcpStream::connect((host, port))).await
-    else {
-        return false;
-    };
-    let mut buf = [0u8; 8];
-    match timeout(Duration::from_secs(2), stream.read(&mut buf)).await {
-        Ok(Ok(n)) if n >= 4 => buf.starts_with(b"SSH-"),
-        _ => false,
-    }
-}
-
-/// This entry is OpenSSH. The location is the post-login banner
-/// (`Welcome to AT1 🇦🇹 Austria`), not the smart-config HTTP zone command.
-async fn zones_from_ssh_banner(req: &ZoneFetchRequest) -> Result<ZoneList> {
-    let banner = read_auth_banner(req).await?;
-    let landed = zones_from_welcome(&banner);
-    let panel = landed.iter().any(|z| is_panel_node(&z.id));
-    if !panel {
-        return Err(SshError::Zones(
-            "SSH login worked, but the server did not name a location.".into(),
-        ));
-    }
-    Ok(ZoneList {
-        hash: None,
-        zones: provider_catalog(),
-        https: false,
-    })
-}
-
-fn is_panel_node(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    bytes.len() >= 3
-        && bytes[..2].iter().all(|c| c.is_ascii_uppercase())
-        && bytes[2..].iter().all(|c| c.is_ascii_digit())
-}
-
-/// Servers this gateway is known to host. The login banner only reports
-/// whichever node this attempt was assigned, so the picker uses the catalog.
-pub fn provider_catalog() -> Vec<ZoneInfo> {
-    const ROWS: &[(&str, &str, &str)] = &[
-        ("AL1", "Albania 1", "AL"),
-        ("AU1", "Australia 1", "AU"),
-        ("AT1", "Austria 1", "AT"),
-        ("CA1", "Canada 1", "CA"),
-        ("EE1", "Estonia 1", "EE"),
-        ("FI1", "Finland 1", "FI"),
-        ("FR1", "France 1", "FR"),
-        ("DE4", "Germany 4", "DE"),
-        ("IN1", "India 1", "IN"),
-        ("IE1", "Ireland 1", "IE"),
-        ("IT1", "Italy 1", "IT"),
-        ("JP1", "Japan 1", "JP"),
-        ("KZ1", "Kazakhstan 1", "KZ"),
-        ("LU1", "Luxembourg 1", "LU"),
-        ("NL3", "Netherlands 3", "NL"),
-        ("PL1", "Poland 1", "PL"),
-        ("PT1", "Portugal 1", "PT"),
-        ("RO1", "Romania 1", "RO"),
-        ("SG1", "Singapore 1", "SG"),
-        ("ZA1", "South Africa 1", "ZA"),
-        ("ES1", "Spain 1", "ES"),
-        ("ES2", "Spain 2", "ES"),
-        ("SE1", "Sweden 1", "SE"),
-        ("TR1", "Turkey 1", "TR"),
-        ("UA1", "Ukraine 1", "UA"),
-        ("AE1", "United Arab Emirates 1", "AE"),
-        ("UK2", "United Kingdom 2", "GB"),
-        ("US2", "United States 2", "US"),
-        ("US1", "United States 1", "US"),
-    ];
-    ROWS.iter()
-        .map(|(id, name, iso)| ZoneInfo {
-            id: (*id).to_string(),
-            name: (*name).to_string(),
-            iso: Some((*iso).to_string()),
-        })
-        .collect()
-}
-
-pub(crate) async fn read_auth_banner(req: &ZoneFetchRequest) -> Result<String> {
-    struct BannerHandler {
-        banner: Arc<std::sync::Mutex<String>>,
-    }
-
-    impl russh::client::Handler for BannerHandler {
-        type Error = SshError;
-
-        async fn check_server_key(
-            &mut self,
-            _server_public_key: &russh::keys::PublicKey,
-        ) -> std::result::Result<bool, Self::Error> {
-            Ok(true)
-        }
-
-        async fn auth_banner(
-            &mut self,
-            banner: &str,
-            _session: &mut russh::client::Session,
-        ) -> std::result::Result<(), Self::Error> {
-            let mut slot = self.banner.lock().unwrap_or_else(|err| err.into_inner());
-            slot.push_str(banner);
-            if !banner.ends_with('\n') {
-                slot.push('\n');
-            }
-            Ok(())
-        }
-    }
-
-    let slot = Arc::new(std::sync::Mutex::new(String::new()));
-    let config = russh::client::Config {
-        inactivity_timeout: Some(Duration::from_secs(8)),
-        ..Default::default()
-    };
-    let handler = BannerHandler {
-        banner: Arc::clone(&slot),
-    };
-    let mut handle = timeout(
-        Duration::from_secs(12),
-        russh::client::connect(Arc::new(config), (req.host.as_str(), req.port), handler),
-    )
-    .await
-    .map_err(|_| SshError::Zones("SSH login timed out while reading the location.".into()))?
-    .map_err(|err| {
-        SshError::Zones(format!(
-            "SSH login failed while reading the location. ({err})"
-        ))
-    })?;
-    let auth = handle
-        .authenticate_password(&req.username, req.password.as_str())
-        .await
-        .map_err(|err| {
-            SshError::Zones(format!(
-                "SSH login failed while reading the location. ({err})"
-            ))
-        })?;
-    if !auth.success() {
-        return Err(SshError::Zones(
-            "SSH login failed while reading the location.".into(),
-        ));
-    }
-    // The location line can arrive in a second banner packet just after auth.
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    let _ = handle
-        .disconnect(russh::Disconnect::ByApplication, "", "en")
-        .await;
-    let banner = slot.lock().unwrap_or_else(|err| err.into_inner()).clone();
-    Ok(banner)
 }
 
 pub fn zones_from_welcome(text: &str) -> Vec<ZoneInfo> {
@@ -573,7 +313,7 @@ fn parse_zone_item(item: &Value) -> Option<ZoneInfo> {
             if id.is_empty() {
                 return None;
             }
-            let iso = iso_if_code(id);
+            let iso = iso_from_zone_id(id);
             Some(ZoneInfo {
                 id: id.to_string(),
                 name: id.to_string(),
@@ -607,7 +347,7 @@ fn parse_zone_item(item: &Value) -> Option<ZoneInfo> {
                 ],
             )
             .and_then(|s| iso_if_code(&s))
-            .or_else(|| iso_if_code(&id));
+            .or_else(|| iso_from_zone_id(&id));
             Some(ZoneInfo { id, name, iso })
         }
         _ => None,
@@ -633,6 +373,16 @@ fn iso_if_code(value: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn iso_from_zone_id(id: &str) -> Option<String> {
+    let prefix = id.get(..2)?;
+    let suffix = id.get(2..)?;
+    if !suffix.is_empty() && !suffix.chars().next()?.is_ascii_digit() {
+        return None;
+    }
+    let iso = iso_if_code(prefix)?;
+    Some(if iso == "UK" { "GB".into() } else { iso })
 }
 
 struct HttpResponse {
@@ -700,7 +450,7 @@ async fn open_zone_stream(
         return Ok(Box::new(stream));
     }
     let tls = TlsSettings {
-        verify: attempt.verify,
+        verify: true,
         alpn: vec!["http/1.1".into()],
         ..TlsSettings::default()
     };
@@ -818,14 +568,31 @@ mod tests {
             method: "GET",
             host: "entry.example",
             port: 80,
-            path: "/",
+            path: "/smart-path",
             content_type: None,
             zone_id: Some("us"),
             body: None,
             https: false,
         });
+        assert!(forced.starts_with("GET /smart-path HTTP/1.1\r\n"));
         assert!(forced.contains("Host: entry.example\r\n"));
         assert!(forced.contains("X-Zone-Id: us\r\n"));
+
+        let injected = http_request(&ZoneHttpRequest {
+            zone_id: Some("de4\r\nX-Extra: injected"),
+            ..ZoneHttpRequest {
+                method: "GET",
+                host: "entry.example",
+                port: 80,
+                path: "/smart-path",
+                content_type: None,
+                zone_id: None,
+                body: None,
+                https: false,
+            }
+        });
+        assert!(!injected.contains("X-Zone-Id:"));
+        assert!(!injected.contains("X-Extra:"));
 
         let tls = http_request(&ZoneHttpRequest {
             method: "POST",
@@ -869,6 +636,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_provider_style_zone_ids_without_inventing_a_catalog() {
+        let raw = br##"{
+            "defaultZoneId":"#ac_dpco",
+            "hash":"opaque-cache-token",
+            "zones":[
+                {"id":"#ac_dpco","name":"Automatic"},
+                {"id":"de4","name":"Germany 4","description":"Provider exit"},
+                {"id":"uk2","name":"United Kingdom 2"}
+            ]
+        }"##;
+        let list = parse_zone_list(raw).unwrap();
+        assert_eq!(list.zones.len(), 3);
+        assert_eq!(list.zones[0].iso, None);
+        assert_eq!(list.zones[1].id, "de4");
+        assert_eq!(list.zones[1].iso.as_deref(), Some("DE"));
+        assert_eq!(list.zones[2].iso.as_deref(), Some("GB"));
+    }
+
+    #[test]
     fn accepts_response_wrapper() {
         let raw = br#"{"response":{"hash":"h1","zones":[{"id":"nl","isoCode":"NL","countryName":"Netherlands"}]}}"#;
         let list = parse_zone_list(raw).unwrap();
@@ -882,21 +668,6 @@ mod tests {
     fn missing_zones_is_an_error() {
         let err = parse_zone_list(br#"{"hash":"x","ok":true}"#).unwrap_err();
         assert!(err.to_string().contains("Invalid response: no zones"));
-    }
-
-    #[test]
-    fn catalog_lists_the_known_servers() {
-        let zones = provider_catalog();
-        assert_eq!(zones.len(), 29);
-        assert!(zones.iter().any(|z| z.id == "DE4" && z.name == "Germany 4"));
-        assert!(zones.iter().any(|z| z.id == "ES1" && z.name == "Spain 1"));
-        assert!(zones.iter().any(|z| z.id == "ES2" && z.name == "Spain 2"));
-        assert!(zones
-            .iter()
-            .any(|z| z.id == "US1" && z.name == "United States 1"));
-        assert!(zones
-            .iter()
-            .any(|z| z.id == "NL3" && z.name == "Netherlands 3"));
     }
 
     #[test]

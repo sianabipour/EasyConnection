@@ -15,7 +15,7 @@ use tracing::{debug, info};
 use zeroize::Zeroizing;
 
 use crate::host_key::HostKeyVerifier;
-use crate::{HttpZoneProvider, Result, SshError, ZoneProvider};
+use crate::{Result, SshError};
 
 struct ClientHandler {
     verifier: HostKeyVerifier,
@@ -55,10 +55,8 @@ pub struct SshConnectOptions {
     pub connect_timeout_secs: u64,
     pub host_key_policy: HostKeyPolicy,
     pub known_hosts_path: Option<PathBuf>,
-    /// Exit zone id. None is Auto / best and does not send `X-Zone-Id`.
+    /// Legacy saved zone id; plain SSH cannot honor it.
     pub zone_id: Option<String>,
-    /// The zone list was fetched with HTTPS. The select request uses the same scheme.
-    pub zone_https: bool,
 }
 
 impl SshConnectOptions {
@@ -90,7 +88,6 @@ impl SshConnectOptions {
                 .as_ref()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
-            zone_https: cfg.zones_cache.as_ref().is_some_and(|cache| cache.https),
         })
     }
 }
@@ -103,29 +100,13 @@ pub struct SshSession {
 
 impl SshSession {
     pub async fn connect(opts: SshConnectOptions, secrets: &SecretsStore) -> Result<Self> {
-        let want = opts.zone_id.clone().filter(|id| !id.is_empty());
-        let tries = if want.is_some() { 8 } else { 1 };
-        let mut last_landed = None;
-        for attempt in 1..=tries {
-            let (session, landed) = connect_once(&opts, secrets).await?;
-            let matches = match (&want, &landed) {
-                (None, _) | (Some(_), None) => true,
-                (Some(want_id), Some(got)) => got == want_id,
-            };
-            if matches {
-                return Ok(session);
-            }
-            last_landed = landed;
-            let _ = session.disconnect().await;
-            if attempt == tries {
-                break;
-            }
+        if opts.zone_id.is_some() {
+            return Err(SshError::Zones(
+                "This SSH profile cannot select an exit zone. Clear the saved zone to use the server's automatic routing; Smart Config tunneling is not implemented yet."
+                    .into(),
+            ));
         }
-        Err(SshError::Zones(format!(
-            "Could not reach {}. The gateway assigned {}.",
-            want.unwrap_or_else(|| "the selected server".into()),
-            last_landed.unwrap_or_else(|| "no location".into())
-        )))
+        connect_once(&opts, secrets).await
     }
 
     /// SSH over an already-dialed transport (TLS / WebSocket / HTTP Upgrade).
@@ -134,7 +115,12 @@ impl SshSession {
         secrets: &SecretsStore,
         stream: Box<dyn rt_tls::TransportIo>,
     ) -> Result<Self> {
-        signal_zone_if_selected(&opts).await;
+        if opts.zone_id.is_some() {
+            return Err(SshError::Zones(
+                "This SSH profile cannot select an exit zone. Clear the saved zone to use the server's automatic routing; Smart Config tunneling is not implemented yet."
+                    .into(),
+            ));
+        }
         let known_hosts = opts.known_hosts_path.unwrap_or_else(default_known_hosts);
         let verifier = HostKeyVerifier::new(
             opts.host.clone(),
@@ -230,13 +216,7 @@ impl UpstreamConnector for SshUpstream {
     }
 }
 
-async fn connect_once(
-    opts: &SshConnectOptions,
-    secrets: &SecretsStore,
-) -> Result<(SshSession, Option<String>)> {
-    if !crate::zones::tcp_speaks_ssh(&opts.host, opts.port).await {
-        signal_zone_if_selected(opts).await;
-    }
+async fn connect_once(opts: &SshConnectOptions, secrets: &SecretsStore) -> Result<SshSession> {
     let known_hosts = opts
         .known_hosts_path
         .clone()
@@ -276,9 +256,6 @@ async fn connect_once(
     .await
     .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))??;
     authenticate(&mut handle, &opts.username, &opts.auth, secrets).await?;
-    if opts.zone_id.is_some() {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-    }
     let text = banner.lock().unwrap_or_else(|err| err.into_inner()).clone();
     let landed = crate::zones_from_welcome(&text)
         .into_iter()
@@ -290,33 +267,11 @@ async fn connect_once(
         })
         .map(|zone| zone.id);
     info!(host = %opts.host, port = opts.port, user = %opts.username, landed = ?landed, "SSH session established");
-    Ok((
-        SshSession {
-            handle,
-            host: opts.host.clone(),
-            port: opts.port,
-        },
-        landed,
-    ))
-}
-
-async fn signal_zone_if_selected(opts: &SshConnectOptions) {
-    let Some(zone_id) = opts.zone_id.as_deref() else {
-        return;
-    };
-    let provider = HttpZoneProvider;
-    if let Err(err) = provider
-        .signal_selected_zone(&opts.host, opts.port, zone_id, opts.zone_https)
-        .await
-    {
-        tracing::warn!(
-            host = %opts.host,
-            port = opts.port,
-            zone_id,
-            error = %err,
-            "could not signal selected zone; SSH connect continues"
-        );
-    }
+    Ok(SshSession {
+        handle,
+        host: opts.host.clone(),
+        port: opts.port,
+    })
 }
 
 async fn authenticate(

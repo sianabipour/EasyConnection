@@ -27,14 +27,16 @@ Full-tunnel TCP is intercepted with the owned nftables table and forwarded by th
 
 UDP: not native to SSH. DNS/53 is carried with DNS-over-TCP (Phase 3) and optionally UDPGW (Phase 5). Arbitrary UDP uses a BadVPN UDPGW client when the remote runs a compatible daemon.
 
-**Exit zones:** optional. A zone-capable entry host answers `POST /` with
-`{"command":"zone","username","password"}` and a JSON `zones` array. The chosen
-id is sent as `X-Zone-Id` on a `User-Agent: smart_config/1.0` GET before SSH.
-The SSH username is not rewritten. Plain OpenSSH has no zone list and connects
-as before. The encrypted smart-config blob is not implemented. See `docs/ZONES.md`.
+**Exit zones:** RocketTunnel's zone picker belongs to an imported Smart Config
+`/i/` link, not a plain SSH Direct profile. Easy can decode that link in memory
+and preview its JSON zone list (`POST <smart.path>` with `command: zone`).
+RocketTunnel applies the selected id with `X-Zone-Id` on a separate encrypted
+Smart Config GET, whose response/tunnel flow is not implemented in Easy.
+Easy does not offer forced-country SSH Direct connections or rewrite the SSH
+username. Plain OpenSSH continues to connect as before. See `docs/ZONES.md`.
 
-**Proprietary compatibility:** Zone list + `X-Zone-Id` only. Encrypted smart-config
-blobs are not implemented.  
+**Proprietary compatibility:** Smart Config zone-list preview only; selected-
+country tunnel is not implemented.
 **Standards-compatible implementation:** Implemented (Phase 2+).
 
 Host-key verification is mandatory by default.

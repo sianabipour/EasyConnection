@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useConnection } from "../hooks/useConnection";
 import { api } from "../lib/api";
-import type { Profile, RoutingMode, ZoneInfo } from "../lib/types";
-import { ZonePicker } from "./ZonePicker";
+import type { RoutingMode, ZoneInfo } from "../lib/types";
+import { SmartZonePreview } from "./SmartZonePreview";
 
 function formatRate(bps: number) {
   if (bps < 1024) return `${bps.toFixed(0)} B/s`;
@@ -16,13 +16,6 @@ function tunnelLabel(snapshot: { routing_mode: string; tun_name?: string | null 
   if (snapshot.routing_mode.includes("full")) return "VPN (starting)";
   if (snapshot.routing_mode.includes("split")) return "Split";
   return "Proxy";
-}
-
-function zoneLabel(profile: Profile): string {
-  if (profile.protocol !== "ssh") return "";
-  if (!profile.selected_zone) return "Auto";
-  const match = profile.zones?.find((z) => z.id === profile.selected_zone);
-  return match?.name || profile.selected_zone;
 }
 
 export function HomePage() {
@@ -48,14 +41,13 @@ export function HomePage() {
   const [importText, setImportText] = useState("");
   const [importErr, setImportErr] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [smartZones, setSmartZones] = useState<ZoneInfo[]>([]);
+  const [smartLoading, setSmartLoading] = useState(false);
+  const [smartError, setSmartError] = useState<string | null>(null);
   const [pingBusy, setPingBusy] = useState<string | null>(null);
   const [pingMsg, setPingMsg] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [zoneFor, setZoneFor] = useState<Profile | null>(null);
-  const [zoneList, setZoneList] = useState<ZoneInfo[]>([]);
-  const [zoneSelected, setZoneSelected] = useState<string | null>(null);
-  const [zoneLoading, setZoneLoading] = useState(false);
-  const [zoneError, setZoneError] = useState<string | null>(null);
+  const [zoneClearError, setZoneClearError] = useState<Record<string, string>>({});
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,8 +71,13 @@ export function HomePage() {
   }, [menuOpen]);
 
   const selected = profiles.find((p) => p.id === selectedId) || null;
+  const isSmartLink = /^https?:\/\/[^/]+\/i\//i.test(importText.trim());
 
   async function runImport() {
+    if (isSmartLink) {
+      setImportErr("Smart Config tunneling is not implemented yet. You can preview its countries below, but cannot import it as an SSH profile.");
+      return;
+    }
     setImportErr(null);
     setImporting(true);
     try {
@@ -96,6 +93,8 @@ export function HomePage() {
 
   async function pasteClipboard() {
     setImportErr(null);
+    setSmartZones([]);
+    setSmartError(null);
     try {
       const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
       setImportText(await readText());
@@ -138,34 +137,26 @@ export function HomePage() {
     }
   }
 
-  async function openZones(profile: Profile) {
-    setZoneFor(profile);
-    setZoneList(profile.zones || []);
-    setZoneSelected(profile.selected_zone || null);
-    setZoneError(null);
-    setZoneLoading(true);
+  async function previewSmartZones() {
+    setSmartLoading(true);
+    setSmartError(null);
     try {
-      const fresh = await api.fetchZones(profile.id);
-      setZoneList(fresh.zones || []);
-      setZoneSelected(fresh.selected_zone || null);
-      await refresh();
+      setSmartZones(await api.previewSmartZones(importText.trim()));
     } catch (err) {
-      setZoneError(err instanceof Error ? err.message : String(err));
+      setSmartZones([]);
+      setSmartError(err instanceof Error ? err.message : String(err));
     } finally {
-      setZoneLoading(false);
+      setSmartLoading(false);
     }
   }
 
-  async function pickZone(zoneId: string | null) {
-    if (!zoneFor) return;
-    setZoneSelected(zoneId);
+  async function clearLegacyZone(id: string) {
     try {
-      const fresh = await api.setSelectedZone(zoneFor.id, zoneId);
-      setZoneSelected(fresh.selected_zone || null);
-      setZoneList(fresh.zones || zoneList);
+      await api.setSelectedZone(id, null);
+      setZoneClearError((current) => ({ ...current, [id]: "" }));
       await refresh();
     } catch (err) {
-      setZoneError(err instanceof Error ? err.message : String(err));
+      setZoneClearError((current) => ({ ...current, [id]: err instanceof Error ? err.message : String(err) }));
     }
   }
 
@@ -336,17 +327,24 @@ export function HomePage() {
             className="mt-3 h-24 w-full rounded-lg border border-[var(--color-line)] bg-[var(--color-panel-2)] px-3 py-2 font-mono text-xs text-white outline-none focus:border-[var(--color-accent)]"
             placeholder="Paste a URI or JSON profile…"
             value={importText}
-            onChange={(e) => setImportText(e.target.value)}
+            onChange={(e) => {
+              setImportText(e.target.value);
+              setSmartZones([]);
+              setSmartError(null);
+              setImportErr(null);
+            }}
           />
           <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              disabled={importing || !importText.trim()}
-              onClick={() => void runImport()}
-              className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] disabled:opacity-40"
-            >
-              {importing ? "Importing…" : "Import"}
-            </button>
+            {!isSmartLink && (
+              <button
+                type="button"
+                disabled={importing || !importText.trim()}
+                onClick={() => void runImport()}
+                className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] disabled:opacity-40"
+              >
+                {importing ? "Importing…" : "Import"}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void pasteClipboard()}
@@ -355,6 +353,14 @@ export function HomePage() {
               Paste clipboard
             </button>
           </div>
+          {isSmartLink && (
+            <SmartZonePreview
+              zones={smartZones}
+              loading={smartLoading}
+              error={smartError}
+              onLoad={() => void previewSmartZones()}
+            />
+          )}
           {importErr && <p className="mt-2 text-sm text-[var(--color-danger)]">{importErr}</p>}
         </div>
       )}
@@ -374,7 +380,6 @@ export function HomePage() {
                 snapshot.profile_id === p.id &&
                 (snapshot.state === "connected" || snapshot.state === "degraded");
               const picked = selectedId === p.id;
-              const country = zoneLabel(p);
               return (
                 <li key={p.id}>
                   <div
@@ -409,21 +414,24 @@ export function HomePage() {
                         </div>
                         {p.protocol === "ssh" && (
                           <div className="mt-2 inline-flex items-center rounded-full border border-[var(--color-line)] px-2 py-0.5 text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
-                            Zone {country}
+                            {p.selected_zone ? "Unsupported saved zone" : "Automatic exit"}
                           </div>
+                        )}
+                        {zoneClearError[p.id] && (
+                          <p role="alert" className="mt-2 text-xs text-[var(--color-danger)]">{zoneClearError[p.id]}</p>
                         )}
                         {pingMsg[p.id] && (
                           <div className="mt-1 text-xs text-[var(--color-accent)]">{pingMsg[p.id]}</div>
                         )}
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        {p.protocol === "ssh" && (
+                        {p.protocol === "ssh" && p.selected_zone && (
                           <button
                             type="button"
-                            onClick={() => void openZones(p)}
+                            onClick={() => void clearLegacyZone(p.id)}
                             className="rounded-md bg-[var(--color-panel-2)] px-3 py-1.5 text-sm text-white hover:brightness-125"
                           >
-                            Change zone
+                            Clear old zone
                           </button>
                         )}
                         <button
@@ -457,39 +465,6 @@ export function HomePage() {
         )}
       </div>
 
-      {zoneFor && (
-        <div
-          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setZoneFor(null)}
-        >
-          <div
-            className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-2xl border border-[var(--color-line)] bg-[var(--color-ink)] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-base font-medium text-white">Change zone</p>
-                <p className="text-xs text-[var(--color-muted)]">{zoneFor.name}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setZoneFor(null)}
-                className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
-              >
-                Close
-              </button>
-            </div>
-            <ZonePicker
-              zones={zoneList}
-              selectedId={zoneSelected}
-              loading={zoneLoading}
-              error={zoneError}
-              onReload={() => void openZones(zoneFor)}
-              onSelect={(id) => void pickZone(id)}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

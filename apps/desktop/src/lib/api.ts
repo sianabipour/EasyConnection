@@ -9,6 +9,7 @@ import type {
   Profile,
   RoutingMode,
   UpdateProfile,
+  ZoneInfo,
 } from "./types";
 
 export type AppSettingsDto = {
@@ -233,10 +234,13 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
       } as T;
     case "fetch_zones": {
       const found = mockProfiles.find((p) => p.id === args?.id);
-      if (!found) throw new Error("Could not load zones. Check connection and try again.");
-      return { ...found, zones: found.zones || [] } as T;
+      if (!found) throw new Error("profile not found");
+      throw new Error("Plain SSH profiles have no Smart Config zone endpoint.");
     }
+    case "preview_smart_zones":
+      throw new Error("Smart Config zone preview requires the Tauri/Rust engine.");
     case "set_selected_zone": {
+      if (args?.zone_id) throw new Error("Plain SSH profiles cannot select an exit zone.");
       mockProfiles = mockProfiles.map((p) =>
         p.id === args?.id ? { ...p, selected_zone: (args?.zone_id as string) || null } : p,
       );
@@ -268,6 +272,7 @@ export const api = {
   updateProfile: (input: UpdateProfile) => call<Profile>("update_ssh_profile", { ...input }),
   deleteProfile: (id: string) => call<void>("delete_profile", { id }),
   fetchZones: (id: string) => call<Profile>("fetch_zones", { id }),
+  previewSmartZones: (link: string) => call<ZoneInfo[]>("preview_smart_zones", { link }),
   setSelectedZone: (id: string, zoneId: string | null) =>
     call<Profile>("set_selected_zone", { id, zone_id: zoneId }),
   connect: (id: string) => call<ConnectionSnapshot>("connect_profile", { id }),

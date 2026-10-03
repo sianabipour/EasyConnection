@@ -166,6 +166,7 @@ fn parse_fingerprint(s: &str) -> Result<TlsFingerprintProfile, String> {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Existing flattened Tauri IPC fields.
 fn apply_transport_tls(
     cfg: &mut ConnectionConfig,
     transport: Option<String>,
@@ -205,6 +206,7 @@ fn apply_transport_tls(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Existing flattened Tauri IPC fields.
 fn apply_common(
     cfg: &mut ConnectionConfig,
     socks_port: Option<u16>,
@@ -269,6 +271,7 @@ pub fn list_profiles(ctrl: State<'_, Arc<AppController>>) -> Result<Vec<ProfileD
 }
 
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)] // Keep the existing desktop command payload compatible.
 pub fn add_ssh_profile(
     ctrl: State<'_, Arc<AppController>>,
     name: String,
@@ -350,6 +353,7 @@ pub fn add_ssh_profile(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)] // Keep the existing desktop command payload compatible.
 pub fn add_ss_profile(
     ctrl: State<'_, Arc<AppController>>,
     name: String,
@@ -408,6 +412,7 @@ pub fn add_ss_profile(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)] // Keep the existing desktop command payload compatible.
 pub fn add_vless_profile(
     ctrl: State<'_, Arc<AppController>>,
     name: String,
@@ -557,6 +562,7 @@ pub fn get_profile(ctrl: State<'_, Arc<AppController>>, id: String) -> Result<Pr
 }
 
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)] // Keep the existing desktop command payload compatible.
 pub fn update_ssh_profile(
     ctrl: State<'_, Arc<AppController>>,
     id: String,
@@ -701,6 +707,25 @@ pub async fn fetch_zones(
     ctrl.fetch_zones(id).await.map_err(|e| e.to_string())?;
     let cfg = ctrl.get_profile(id).map_err(|e| e.to_string())?;
     Ok(to_dto(&cfg))
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn preview_smart_zones(
+    ctrl: State<'_, Arc<AppController>>,
+    link: String,
+) -> Result<Vec<ZoneDto>, String> {
+    let zones = ctrl
+        .preview_smart_zones(&link)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(zones
+        .into_iter()
+        .map(|zone| ZoneDto {
+            id: zone.id,
+            name: zone.name,
+            iso: zone.iso,
+        })
+        .collect())
 }
 
 #[tauri::command(rename_all = "snake_case")]
