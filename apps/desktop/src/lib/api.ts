@@ -239,6 +239,8 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
     }
     case "preview_smart_zones":
       throw new Error("Smart Config zone preview requires the Tauri/Rust engine.");
+    case "import_smart_link":
+      throw new Error("Smart Config import requires the Tauri/Rust engine.");
     case "set_selected_zone": {
       if (args?.zone_id) throw new Error("Plain SSH profiles cannot select an exit zone.");
       mockProfiles = mockProfiles.map((p) =>
@@ -273,6 +275,7 @@ export const api = {
   deleteProfile: (id: string) => call<void>("delete_profile", { id }),
   fetchZones: (id: string) => call<Profile>("fetch_zones", { id }),
   previewSmartZones: (link: string) => call<ZoneInfo[]>("preview_smart_zones", { link }),
+  importSmartLink: (link: string) => call<Profile>("import_smart_link", { link }),
   setSelectedZone: (id: string, zoneId: string | null) =>
     call<Profile>("set_selected_zone", { id, zone_id: zoneId }),
   connect: (id: string) => call<ConnectionSnapshot>("connect_profile", { id }),

@@ -62,18 +62,20 @@ pub fn validate_connection(cfg: &ConnectionConfig) -> Result<()> {
 
     match (&cfg.protocol, &cfg.settings) {
         (Protocol::Ssh, ProtocolSettings::Ssh { .. }) => {
-            if cfg
-                .username
-                .as_ref()
-                .map(|u| u.trim().is_empty())
-                .unwrap_or(true)
+            if cfg.smart_link_secret.is_none()
+                && cfg
+                    .username
+                    .as_ref()
+                    .map(|u| u.trim().is_empty())
+                    .unwrap_or(true)
             {
                 return Err(ConfigError::Validation("SSH username is required".into()));
             }
-            if cfg
-                .username
-                .as_ref()
-                .is_some_and(|u| u.len() > 255 || u.chars().any(char::is_control))
+            if cfg.smart_link_secret.is_none()
+                && cfg
+                    .username
+                    .as_ref()
+                    .is_some_and(|u| u.len() > 255 || u.chars().any(char::is_control))
             {
                 return Err(ConfigError::Validation(
                     "SSH username is too long or contains control characters".into(),

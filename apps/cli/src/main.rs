@@ -137,13 +137,13 @@ enum Commands {
     /// Connect a profile and keep proxies running until Ctrl-C
     Connect {
         id: Uuid,
-        /// `auto` clears an old saved zone; plain SSH does not support forced zones
+        /// Smart Config zone ID, or `auto`/`best` for automatic exit
         #[arg(long)]
         zone: Option<String>,
     },
-    /// Explain why a plain SSH profile has no Smart Config zone endpoint
+    /// Fetch and cache countries for an imported Smart Config profile
     FetchZones { id: Uuid },
-    /// Preview zones from a RocketTunnel /i/ link in a local file (no import/connect)
+    /// Preview zones from a RocketTunnel /i/ link in a local file
     PreviewSmartZones { source: PathBuf },
     /// Show connection snapshot JSON
     Status,
@@ -153,7 +153,7 @@ enum Commands {
     Export { id: Uuid },
     /// Delete a profile
     Delete { id: Uuid },
-    /// Import JSON export or ss:// / vless:// / ssh:// URI (file path or text)
+    /// Import JSON/share URI or Smart Config /i/ link (`-` reads one private stdin line)
     Import { source: String },
     /// TCP connect probe (ICMP ping is not available on the TCP intercept path)
     Ping {
@@ -283,17 +283,26 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::List => {
             for p in controller.list_profiles()? {
-                println!(
-                    "{}  {}  {}+{}://{}:{}  socks={} http={}",
-                    p.id,
-                    p.name,
-                    format!("{:?}", p.protocol).to_lowercase(),
-                    format!("{:?}", p.transport).to_lowercase(),
-                    p.host,
-                    p.port,
-                    p.proxy.socks_port,
-                    p.proxy.http_proxy_port
-                );
+                if p.smart_link_secret.is_some() {
+                    println!(
+                        "{}  {}  smart-config zone={}",
+                        p.id,
+                        p.name,
+                        p.selected_zone.as_deref().unwrap_or("auto")
+                    );
+                } else {
+                    println!(
+                        "{}  {}  {}+{}://{}:{}  socks={} http={}",
+                        p.id,
+                        p.name,
+                        format!("{:?}", p.protocol).to_lowercase(),
+                        format!("{:?}", p.transport).to_lowercase(),
+                        p.host,
+                        p.port,
+                        p.proxy.socks_port,
+                        p.proxy.http_proxy_port
+                    );
+                }
             }
         }
         Commands::AddSsh {
@@ -429,12 +438,20 @@ async fn main() -> Result<()> {
             println!("deleted {id}");
         }
         Commands::Import { source } => {
-            let text = if std::path::Path::new(&source).is_file() {
+            let text = if source == "-" {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                line
+            } else if std::path::Path::new(&source).is_file() {
                 std::fs::read_to_string(&source)?
             } else {
                 source
             };
-            let saved = controller.import_profile_text(&text)?;
+            let saved = if text.trim().starts_with("https://") && text.contains("/i/") {
+                controller.import_smart_link(&text)?
+            } else {
+                controller.import_profile_text(&text)?
+            };
             println!("{}", saved.id);
         }
         Commands::Ping { host, port } => {

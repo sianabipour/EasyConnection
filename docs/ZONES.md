@@ -14,6 +14,16 @@ and the native `smart` flowgraph. An authorized live test with a user-provided
 Smart Config link confirmed the following without publishing that link, hosts,
 path, or credentials:
 
+The separately supplied decompiled Android tree contains the same Hermes
+bundle as the original APK (SHA-256
+`f14b0e14a743e27ce40ec4a34ecd1beaae196f3d40b25d857b35594d8ae84eec`).
+Its `resources/assets/data/flowgraph_templates/smart.patch.json` passes
+`hosts`, `path`, `username`, `password`, `fallback`, and `zone` into a native
+`smart` node, then binds `smart → tls_splitter → tls/domain_resolver → outgoing`.
+The distinct `ssh_direct.patch.json` has an `ssh` node, not a `smart` node.
+This is static evidence of separate connection paths, not proof of a working
+Easy tunnel.
+
 1. The `/i/` URL holds a base64 envelope. The observed version-1 payload is
    XOR-obfuscated with a seed, zlib-compressed, and MessagePack-encoded. It
    contains Smart Config hosts, per-host flags, a request path, and credentials.
@@ -46,7 +56,9 @@ exit-zone picker.
 
 - Desktop: Import menu → paste a Smart Config `/i/` link → **Load countries**
   shows a searchable, read-only provider zone list. The link and credentials
-  remain in memory for that preview and are not stored as an SSH profile.
+  remain in memory for that preview and are not stored as an SSH profile. This
+  is **not yet a persistent Smart Config import**: it cannot be selected with
+  the dashboard Connect button.
 - CLI: `easy preview-smart-zones /path/to/private-link-file` lists zones as
   JSON. Use a private local file; never commit the link or pass it in shell
   arguments/history.

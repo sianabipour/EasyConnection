@@ -35,7 +35,7 @@ export function SmartZonePreview({
         <div>
           <p className="text-sm font-medium text-white">Smart Config countries</p>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            Read-only preview. Easy cannot yet use the encrypted Smart Config response to connect through a selected country.
+            Preview before importing. After import, choose a country on the saved profile and connect from the dashboard.
           </p>
         </div>
         <button

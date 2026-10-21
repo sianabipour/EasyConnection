@@ -73,6 +73,7 @@ pub fn run() {
             commands::delete_profile,
             commands::fetch_zones,
             commands::preview_smart_zones,
+            commands::import_smart_link,
             commands::set_selected_zone,
             commands::connect_profile,
             commands::disconnect,

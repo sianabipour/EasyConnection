@@ -4,6 +4,7 @@ import { useConnection } from "../hooks/useConnection";
 import { api } from "../lib/api";
 import type { RoutingMode, ZoneInfo } from "../lib/types";
 import { SmartZonePreview } from "./SmartZonePreview";
+import { ZonePickerDialog } from "./ZonePickerDialog";
 
 function formatRate(bps: number) {
   if (bps < 1024) return `${bps.toFixed(0)} B/s`;
@@ -48,6 +49,10 @@ export function HomePage() {
   const [pingMsg, setPingMsg] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [zoneClearError, setZoneClearError] = useState<Record<string, string>>({});
+  const [zoneDialogId, setZoneDialogId] = useState<string | null>(null);
+  const [zoneLoading, setZoneLoading] = useState(false);
+  const [zoneSaving, setZoneSaving] = useState(false);
+  const [zoneDialogError, setZoneDialogError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -71,17 +76,29 @@ export function HomePage() {
   }, [menuOpen]);
 
   const selected = profiles.find((p) => p.id === selectedId) || null;
+  const zoneProfile = profiles.find((p) => p.id === zoneDialogId) || null;
   const isSmartLink = /^https?:\/\/[^/]+\/i\//i.test(importText.trim());
 
   async function runImport() {
-    if (isSmartLink) {
-      setImportErr("Smart Config tunneling is not implemented yet. You can preview its countries below, but cannot import it as an SSH profile.");
-      return;
-    }
     setImportErr(null);
     setImporting(true);
     try {
-      await importProfile(importText);
+      if (isSmartLink) {
+        const saved = await api.importSmartLink(importText.trim());
+        setSelectedId(saved.id);
+        await refresh();
+        try {
+          await api.fetchZones(saved.id);
+          await refresh();
+        } catch (err) {
+          setZoneClearError((current) => ({
+            ...current,
+            [saved.id]: err instanceof Error ? err.message : String(err),
+          }));
+        }
+      } else {
+        await importProfile(importText);
+      }
       setImportText("");
       setImportOpen(false);
     } catch (err) {
@@ -157,6 +174,39 @@ export function HomePage() {
       await refresh();
     } catch (err) {
       setZoneClearError((current) => ({ ...current, [id]: err instanceof Error ? err.message : String(err) }));
+    }
+  }
+
+  async function loadProfileZones(id: string) {
+    setZoneLoading(true);
+    setZoneDialogError(null);
+    try {
+      await api.fetchZones(id);
+      await refresh();
+    } catch (err) {
+      setZoneDialogError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setZoneLoading(false);
+    }
+  }
+
+  function openZonePicker(id: string) {
+    setZoneDialogId(id);
+    void loadProfileZones(id);
+  }
+
+  async function chooseZone(zoneId: string | null) {
+    if (!zoneDialogId) return;
+    setZoneSaving(true);
+    setZoneDialogError(null);
+    try {
+      await api.setSelectedZone(zoneDialogId, zoneId);
+      await refresh();
+      setZoneDialogId(null);
+    } catch (err) {
+      setZoneDialogError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setZoneSaving(false);
     }
   }
 
@@ -319,7 +369,7 @@ export function HomePage() {
         <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
           <p className="text-sm font-medium text-white">Import</p>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            JSON, <code className="text-[var(--color-accent)]">ss://</code>,{" "}
+            RocketTunnel Smart Config link, JSON, <code className="text-[var(--color-accent)]">ss://</code>,{" "}
             <code className="text-[var(--color-accent)]">vless://</code>, or{" "}
             <code className="text-[var(--color-accent)]">ssh://</code>. Routing mode is not imported.
           </p>
@@ -335,16 +385,14 @@ export function HomePage() {
             }}
           />
           <div className="mt-2 flex gap-2">
-            {!isSmartLink && (
-              <button
-                type="button"
-                disabled={importing || !importText.trim()}
-                onClick={() => void runImport()}
-                className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] disabled:opacity-40"
-              >
-                {importing ? "Importing…" : "Import"}
-              </button>
-            )}
+            <button
+              type="button"
+              disabled={importing || !importText.trim()}
+              onClick={() => void runImport()}
+              className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-[var(--color-ink)] disabled:opacity-40"
+            >
+              {importing ? "Importing…" : isSmartLink ? "Import Smart Config" : "Import"}
+            </button>
             <button
               type="button"
               onClick={() => void pasteClipboard()}
@@ -408,11 +456,19 @@ export function HomePage() {
                           <span className="truncate font-medium text-white">{p.name}</span>
                         </div>
                         <div className="mt-1 truncate font-mono text-xs text-[var(--color-muted)]">
-                          {p.protocol}+{p.transport}://
-                          {p.protocol === "ssh" && p.username ? `${p.username}@` : ""}
-                          {p.host}:{p.port}
+                          {p.is_smart ? "RocketTunnel Smart Config" : (
+                            <>
+                              {p.protocol}+{p.transport}://
+                              {p.protocol === "ssh" && p.username ? `${p.username}@` : ""}
+                              {p.host}:{p.port}
+                            </>
+                          )}
                         </div>
-                        {p.protocol === "ssh" && (
+                        {p.is_smart ? (
+                          <div className="mt-2 inline-flex items-center rounded-full border border-[var(--color-accent)] px-2 py-0.5 text-[11px] text-[var(--color-accent)]">
+                            Exit: {p.selected_zone ? p.zones?.find((zone) => zone.id === p.selected_zone)?.name || p.selected_zone : "Auto / Best"}
+                          </div>
+                        ) : p.protocol === "ssh" && (
                           <div className="mt-2 inline-flex items-center rounded-full border border-[var(--color-line)] px-2 py-0.5 text-[11px] uppercase tracking-wide text-[var(--color-muted)]">
                             {p.selected_zone ? "Unsupported saved zone" : "Automatic exit"}
                           </div>
@@ -425,7 +481,16 @@ export function HomePage() {
                         )}
                       </div>
                       <div className="flex shrink-0 flex-wrap justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        {p.protocol === "ssh" && p.selected_zone && (
+                        {p.is_smart && (
+                          <button
+                            type="button"
+                            onClick={() => openZonePicker(p.id)}
+                            className="rounded-md border border-[var(--color-accent)] px-3 py-1.5 text-sm text-[var(--color-accent)] hover:bg-[var(--color-panel-2)]"
+                          >
+                            Change zone
+                          </button>
+                        )}
+                        {p.protocol === "ssh" && !p.is_smart && p.selected_zone && (
                           <button
                             type="button"
                             onClick={() => void clearLegacyZone(p.id)}
@@ -434,20 +499,20 @@ export function HomePage() {
                             Clear old zone
                           </button>
                         )}
-                        <button
+                        {!p.is_smart && <button
                           type="button"
                           disabled={pingBusy === p.id}
                           onClick={() => void pingProfile(p.id, p.host, p.port)}
                           className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white disabled:opacity-40"
                         >
                           {pingBusy === p.id ? "Pinging…" : "Ping"}
-                        </button>
-                        <Link
+                        </button>}
+                        {!p.is_smart && <Link
                           to={`/servers/${p.id}/edit`}
                           className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
                         >
                           Edit
-                        </Link>
+                        </Link>}
                         <button
                           type="button"
                           onClick={() => void remove(p.id)}
@@ -464,6 +529,18 @@ export function HomePage() {
           </ul>
         )}
       </div>
+
+      {zoneProfile && (
+        <ZonePickerDialog
+          profile={zoneProfile}
+          loading={zoneLoading}
+          saving={zoneSaving}
+          error={zoneDialogError}
+          onReload={() => void loadProfileZones(zoneProfile.id)}
+          onSelect={(zone) => void chooseZone(zone?.id || null)}
+          onClose={() => setZoneDialogId(null)}
+        />
+      )}
 
     </div>
   );

@@ -33,18 +33,19 @@ export function ServersPage() {
               <div className="min-w-0">
                 <div className="font-medium text-white">{profile.name}</div>
                 <div className="mt-1 truncate font-mono text-xs text-[var(--color-muted)]">
-                  {profile.protocol}+{profile.transport}://{profile.host}:{profile.port}
-                  {profile.protocol === "ssh" &&
+                  {profile.is_smart ? "Smart Config" : `${profile.protocol}+${profile.transport}://${profile.host}:${profile.port}`}
+                  {profile.is_smart && ` · ${profile.selected_zone || "Auto / Best"}`}
+                  {profile.protocol === "ssh" && !profile.is_smart &&
                     (profile.selected_zone ? " · unsupported saved zone" : " · automatic exit")}
                 </div>
               </div>
               <div className="flex gap-2">
-                <Link
+                {!profile.is_smart && <Link
                   to={`/servers/${profile.id}/edit`}
                   className="rounded-md border border-[var(--color-line)] px-3 py-1.5 text-sm text-[var(--color-muted)] hover:text-white"
                 >
                   Edit
-                </Link>
+                </Link>}
                 <button
                   type="button"
                   onClick={() => void remove(profile.id)}

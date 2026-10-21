@@ -115,6 +115,25 @@ impl SshSession {
         secrets: &SecretsStore,
         stream: Box<dyn rt_tls::TransportIo>,
     ) -> Result<Self> {
+        Self::connect_over_transport_inner(opts, Some(secrets), None, stream).await
+    }
+
+    /// Smart Config supplies the short-lived SSH password inside its
+    /// authenticated response; never persist that response in SecretsStore.
+    pub async fn connect_over_transport_password(
+        opts: SshConnectOptions,
+        password: &str,
+        stream: Box<dyn rt_tls::TransportIo>,
+    ) -> Result<Self> {
+        Self::connect_over_transport_inner(opts, None, Some(password), stream).await
+    }
+
+    async fn connect_over_transport_inner(
+        opts: SshConnectOptions,
+        secrets: Option<&SecretsStore>,
+        password: Option<&str>,
+        stream: Box<dyn rt_tls::TransportIo>,
+    ) -> Result<Self> {
         if opts.zone_id.is_some() {
             return Err(SshError::Zones(
                 "This SSH profile cannot select an exit zone. Clear the saved zone to use the server's automatic routing; Smart Config tunneling is not implemented yet."
@@ -151,13 +170,24 @@ impl SshSession {
         .await
         .map_err(|_| SshError::Timeout(opts.connect_timeout_secs))??;
 
-        authenticate(&mut handle, &opts.username, &opts.auth, secrets).await?;
-        info!(
-            host = %opts.host,
-            port = opts.port,
-            user = %opts.username,
-            "SSH session established over transport"
-        );
+        if let Some(password) = password {
+            if !handle
+                .authenticate_password(&opts.username, password)
+                .await?
+                .success()
+            {
+                return Err(SshError::AuthenticationFailed);
+            }
+        } else {
+            authenticate(
+                &mut handle,
+                &opts.username,
+                &opts.auth,
+                secrets.ok_or_else(|| SshError::Config("secrets store missing".into()))?,
+            )
+            .await?;
+        }
+        info!("SSH session established over transport");
         Ok(Self {
             handle,
             host: opts.host,

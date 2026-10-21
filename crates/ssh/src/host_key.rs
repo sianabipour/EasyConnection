@@ -39,7 +39,7 @@ impl HostKeyVerifier {
             Ok(true) => Ok(true),
             Ok(false) => match self.policy {
                 HostKeyPolicy::Strict => {
-                    warn!(host = %self.host, port = self.port, "unknown host key rejected (Strict)");
+                    warn!("unknown host key rejected (Strict)");
                     Err(SshError::HostKeyMismatch {
                         host: self.host.clone(),
                         port: self.port,
@@ -47,8 +47,6 @@ impl HostKeyVerifier {
                 }
                 HostKeyPolicy::Tofu => {
                     info!(
-                        host = %self.host,
-                        port = self.port,
                         fingerprint = %key.fingerprint(HashAlg::Sha256),
                         "trusting host key on first use"
                     );
@@ -59,8 +57,6 @@ impl HostKeyVerifier {
                     // Store pending; default deny until UI learns/approves.
                     *self.pending.lock().await = Some(key.clone());
                     warn!(
-                        host = %self.host,
-                        port = self.port,
                         key = %key.public_key_base64(),
                         "host key unknown — Ask policy requires confirmation"
                     );

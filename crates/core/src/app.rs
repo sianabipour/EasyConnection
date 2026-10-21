@@ -68,7 +68,12 @@ impl AppController {
     }
 
     pub fn delete_profile(&self, id: Uuid) -> Result<()> {
-        Ok(self.store.delete_profile(id)?)
+        let cfg = self.store.get_profile(id)?;
+        self.store.delete_profile(id)?;
+        if let Some(secret) = cfg.smart_link_secret {
+            self.secrets.delete_secret(&secret)?;
+        }
+        Ok(())
     }
 
     pub fn duplicate_profile(&self, id: Uuid) -> Result<ConnectionConfig> {
@@ -101,6 +106,10 @@ impl AppController {
             }
             _ => {}
         }
+        if let Some(old) = cfg.smart_link_secret.take() {
+            let value = self.secrets.get_secret(&old)?;
+            cfg.smart_link_secret = Some(self.secrets.put_secret(value.as_str())?);
+        }
         self.store.upsert_profile(&cfg)?;
         Ok(cfg)
     }
@@ -128,12 +137,62 @@ impl AppController {
         Ok(cfg)
     }
 
-    /// Plain SSH does not expose RocketTunnel's Smart Config zone endpoint.
+    pub fn import_smart_link(&self, link: &str) -> Result<ConnectionConfig> {
+        let smart = rt_config::decode_rocket_smart_link(link)?;
+        let host = smart
+            .zone_hosts()
+            .next()
+            .map(|(host, _)| host)
+            .ok_or_else(|| CoreError::Other("Smart Config has no zone-capable host".into()))?;
+        let secret = self.secrets.put_secret(link)?;
+        let cfg = ConnectionConfig::new_smart(
+            "RocketTunnel Smart Config",
+            &host.host,
+            host.port,
+            secret.clone(),
+        );
+        if let Err(error) = self.store.upsert_profile(&cfg) {
+            let _ = self.secrets.delete_secret(&secret);
+            return Err(error.into());
+        }
+        Ok(cfg)
+    }
+
+    /// Plain SSH has no zone API; Smart Config reads its own flagged hosts.
     pub async fn fetch_zones(&self, id: Uuid) -> Result<rt_config::ZonesCache> {
-        self.store.get_profile(id)?;
+        let mut cfg = self.store.get_profile(id)?;
+        let secret = cfg.smart_link_secret.as_ref().ok_or_else(|| {
+            CoreError::Other("This plain SSH profile has no Smart Config zone endpoint".into())
+        })?;
+        let link = self.secrets.get_secret(secret)?;
+        let smart = rt_config::decode_rocket_smart_link(link.as_str())?;
+        for (host, https) in smart.zone_hosts() {
+            let request = rt_ssh::ZoneFetchRequest::new(
+                &host.host,
+                host.port,
+                &smart.username,
+                &smart.password,
+                &smart.path,
+                https,
+            );
+            match rt_ssh::HttpZoneProvider.fetch_zones(request).await {
+                Ok(list) => {
+                    let cache = rt_config::ZonesCache {
+                        hash: list.hash,
+                        zones: list.zones,
+                        fetched_at: chrono::Utc::now(),
+                        https: list.https,
+                    };
+                    cfg.zones_cache = Some(cache.clone());
+                    cfg.updated_at = chrono::Utc::now();
+                    self.store.upsert_profile(&cfg)?;
+                    return Ok(cache);
+                }
+                Err(_) => tracing::debug!("Smart Config zone host did not answer"),
+            }
+        }
         Err(CoreError::Other(
-            "This is a plain SSH profile. RocketTunnel lists exit zones through a separate Smart Config /i/ link; this SSH address has no zone-list API."
-                .into(),
+            "Could not load zones from this Smart Config".into(),
         ))
     }
 
@@ -171,6 +230,23 @@ impl AppController {
         let selected_zone = zone_id
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        if cfg.smart_link_secret.is_some() {
+            if let Some(selected) = selected_zone.as_deref() {
+                if !cfg
+                    .zones_cache
+                    .as_ref()
+                    .is_some_and(|cache| cache.zones.iter().any(|zone| zone.id == selected))
+                {
+                    return Err(CoreError::Other(
+                        "Load countries before selecting a zone".into(),
+                    ));
+                }
+            }
+            cfg.selected_zone = selected_zone;
+            cfg.updated_at = chrono::Utc::now();
+            self.store.upsert_profile(&cfg)?;
+            return Ok(cfg);
+        }
         if selected_zone.is_some() {
             return Err(CoreError::Other(
                 "Exit-zone selection is not supported on plain SSH profiles. Use Auto, or a Smart Config client that implements the encrypted tunnel response."

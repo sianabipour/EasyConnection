@@ -42,6 +42,7 @@ pub struct ProfileDto {
     pub split_bypass_cidrs: Vec<String>,
     pub split_bypass_domains: Vec<String>,
     pub selected_zone: Option<String>,
+    pub is_smart: bool,
     pub zones: Vec<ZoneDto>,
     pub proxy: ProxyDto,
 }
@@ -118,6 +119,7 @@ fn to_dto(cfg: &ConnectionConfig) -> ProfileDto {
         split_bypass_cidrs: cfg.split_bypass_cidrs.clone(),
         split_bypass_domains: cfg.split_bypass_domains.clone(),
         selected_zone: cfg.selected_zone.clone(),
+        is_smart: cfg.smart_link_secret.is_some(),
         zones: cfg
             .zones_cache
             .as_ref()
@@ -726,6 +728,16 @@ pub async fn preview_smart_zones(
             iso: zone.iso,
         })
         .collect())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn import_smart_link(
+    ctrl: State<'_, Arc<AppController>>,
+    link: String,
+) -> Result<ProfileDto, String> {
+    ctrl.import_smart_link(&link)
+        .map(|cfg| to_dto(&cfg))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "snake_case")]

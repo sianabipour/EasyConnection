@@ -350,6 +350,10 @@ pub struct ConnectionConfig {
     /// Exit zone id. Absent means Auto / best (do not send `X-Zone-Id`).
     #[serde(default)]
     pub selected_zone: Option<String>,
+    /// Encrypted-vault reference to the original RocketTunnel `/i/` link.
+    /// The URL and its embedded credentials must never enter profile JSON.
+    #[serde(default)]
+    pub smart_link_secret: Option<SecretRef>,
     /// Last successful zone list for this entry host. Empty on plain OpenSSH.
     #[serde(default)]
     pub zones_cache: Option<ZonesCache>,
@@ -390,11 +394,31 @@ impl ConnectionConfig {
             split_bypass_cidrs: Vec::new(),
             split_bypass_domains: Vec::new(),
             selected_zone: None,
+            smart_link_secret: None,
             zones_cache: None,
             notes: None,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn new_smart(
+        name: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        link_secret: SecretRef,
+    ) -> Self {
+        let mut cfg = Self::new_ssh(name, host, port);
+        cfg.username = None;
+        cfg.authentication = AuthMethod::None;
+        cfg.smart_link_secret = Some(link_secret);
+        if let ProtocolSettings::Ssh {
+            host_key_policy, ..
+        } = &mut cfg.settings
+        {
+            *host_key_policy = HostKeyPolicy::Tofu;
+        }
+        cfg
     }
 
     pub fn new_shadowsocks(
@@ -430,6 +454,7 @@ impl ConnectionConfig {
             split_bypass_cidrs: Vec::new(),
             split_bypass_domains: Vec::new(),
             selected_zone: None,
+            smart_link_secret: None,
             zones_cache: None,
             notes: None,
             created_at: now,
@@ -481,6 +506,7 @@ impl ConnectionConfig {
             split_bypass_cidrs: Vec::new(),
             split_bypass_domains: Vec::new(),
             selected_zone: None,
+            smart_link_secret: None,
             zones_cache: None,
             notes: None,
             created_at: now,
@@ -504,6 +530,7 @@ impl ConnectionConfig {
             _ => {}
         }
         cfg.proxy.auth_secret = None;
+        cfg.smart_link_secret = None;
         ExportDocument {
             version: CONFIG_VERSION,
             profile: cfg,

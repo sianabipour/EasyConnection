@@ -70,6 +70,7 @@ export type Profile = {
   split_bypass_cidrs?: string[];
   split_bypass_domains?: string[];
   selected_zone?: string | null;
+  is_smart?: boolean;
   zones?: ZoneInfo[];
   proxy: {
     socks_port: number;

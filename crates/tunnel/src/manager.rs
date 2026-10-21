@@ -87,7 +87,7 @@ impl ConnectionManager {
         self.publish(snap);
     }
 
-    pub async fn connect(&self, profile: ConnectionConfig) -> Result<ConnectionSnapshot> {
+    pub async fn connect(&self, mut profile: ConnectionConfig) -> Result<ConnectionSnapshot> {
         {
             let guard = self.active.lock().await;
             if guard.is_some() {
@@ -171,6 +171,15 @@ impl ConnectionManager {
                 return Err(e);
             }
         };
+
+        // Smart Config resolves the selected exit only during Connect. Route
+        // exclusions must use that SSH endpoint, not the config API host.
+        if let Some(session) = &ssh {
+            profile.host.clone_from(&session.host);
+            profile.port = session.port;
+            snap.server_label = Some(format!("{}:{}", session.host, session.port));
+            self.publish(snap.clone());
+        }
 
         self.set_phase(
             ConnectionState::EstablishingTunnel,
@@ -357,23 +366,30 @@ async fn open_upstream(
 )> {
     match profile.protocol {
         Protocol::Ssh => {
-            let mut opts = SshConnectOptions::from_config(profile)?;
-            if opts.known_hosts_path.is_none() {
-                opts.known_hosts_path = known_hosts;
-            }
-            let ssh = if profile.transport == Transport::Direct {
-                SshSession::connect(opts, secrets).await?
+            let ssh = if let Some(link_ref) = &profile.smart_link_secret {
+                let link = secrets
+                    .get_secret(link_ref)
+                    .map_err(|e| TunnelError::Other(format!("Smart Config vault: {e}")))?;
+                rt_ssh::connect_smart_profile(profile, link.as_str(), known_hosts).await?
             } else {
-                let req = DialRequest::from_profile(
-                    &profile.host,
-                    profile.port,
-                    profile.transport,
-                    profile.tls.clone(),
-                );
-                let stream = dial(&req)
-                    .await
-                    .map_err(|e| TunnelError::Other(format!("SSH transport: {e}")))?;
-                SshSession::connect_over_transport(opts, secrets, stream).await?
+                let mut opts = SshConnectOptions::from_config(profile)?;
+                if opts.known_hosts_path.is_none() {
+                    opts.known_hosts_path = known_hosts;
+                }
+                if profile.transport == Transport::Direct {
+                    SshSession::connect(opts, secrets).await?
+                } else {
+                    let req = DialRequest::from_profile(
+                        &profile.host,
+                        profile.port,
+                        profile.transport,
+                        profile.tls.clone(),
+                    );
+                    let stream = dial(&req)
+                        .await
+                        .map_err(|e| TunnelError::Other(format!("SSH transport: {e}")))?;
+                    SshSession::connect_over_transport(opts, secrets, stream).await?
+                }
             };
             let ssh = Arc::new(ssh);
             let upstream = Arc::new(ssh.upstream());

@@ -81,6 +81,40 @@ pub trait ZoneProvider: Send + Sync {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HttpZoneProvider;
 
+pub(crate) async fn get_smart_config_body(
+    host: &str,
+    port: u16,
+    path: &str,
+    https: bool,
+    zone_id: Option<&str>,
+) -> Result<Vec<u8>> {
+    let request = http_request(&ZoneHttpRequest {
+        method: "GET",
+        host,
+        port,
+        path,
+        content_type: None,
+        zone_id,
+        body: None,
+        https,
+    });
+    let response = exchange_attempt(
+        host,
+        port,
+        ZoneAttempt { https },
+        request.as_bytes(),
+        Duration::from_secs(8),
+    )
+    .await?;
+    if response.status != 200 {
+        return Err(SshError::Zones(format!(
+            "Smart Config host returned HTTP {}",
+            response.status
+        )));
+    }
+    Ok(response.body)
+}
+
 #[async_trait]
 impl ZoneProvider for HttpZoneProvider {
     async fn fetch_zones(&self, req: ZoneFetchRequest) -> Result<ZoneList> {
