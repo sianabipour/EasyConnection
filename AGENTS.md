@@ -1,5 +1,16 @@
 # Easy development handoff
 
+## Current status (2026-11-23)
+
+The October notes below describe earlier investigation. Easy now persists
+Smart Config profiles and zone IDs, decrypts the GET response, resolves its
+credential placeholders and connects using the returned password SSH endpoint.
+Support covers direct TCP and the observed DarkTunnel shim. Three sequential
+live Easy SOCKS sessions passed HTTPS traffic: de4 reported DE, at1 reported
+AT, and al1 reported PL with two independent IP geolocation services.
+Use `docs/ZONES.md` for the current contract. Continue to keep private links,
+credentials and endpoint hostnames out of fixtures, docs and logs.
+
 ## Current work: RocketTunnel Smart Config zones (updated 2026-10-21)
 
 The user's country picker in RocketTunnel is attached to a **Smart Config `/i/` link**, not to a manually entered SSH Direct profile. Do not treat an SSH login banner such as `Welcome to DE4` as a zone list. Do not put the user's private link, credentials, or decoded hostnames in this repository or logs.

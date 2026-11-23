@@ -31,12 +31,13 @@ UDP: not native to SSH. DNS/53 is carried with DNS-over-TCP (Phase 3) and option
 `/i/` link, not a plain SSH Direct profile. Easy can decode that link in memory
 and preview its JSON zone list (`POST <smart.path>` with `command: zone`).
 RocketTunnel applies the selected id with `X-Zone-Id` on a separate encrypted
-Smart Config GET, whose response/tunnel flow is not implemented in Easy.
+Smart Config GET. Easy decrypts the returned endpoint and connects over
+direct TCP or the supported DarkTunnel shim.
 Easy does not offer forced-country SSH Direct connections or rewrite the SSH
 username. Plain OpenSSH continues to connect as before. See `docs/ZONES.md`.
 
-**Proprietary compatibility:** Smart Config zone-list preview only; selected-
-country tunnel is not implemented.
+**Proprietary compatibility:** Smart Config zone discovery and selection for
+the password SSH responses documented in `docs/ZONES.md`.
 **Standards-compatible implementation:** Implemented (Phase 2+).
 
 Host-key verification is mandatory by default.

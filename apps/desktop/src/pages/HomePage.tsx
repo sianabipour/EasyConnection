@@ -201,6 +201,7 @@ export function HomePage() {
     setZoneDialogError(null);
     try {
       await api.setSelectedZone(zoneDialogId, zoneId);
+      setSelectedId(zoneDialogId);
       await refresh();
       setZoneDialogId(null);
     } catch (err) {

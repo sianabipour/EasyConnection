@@ -107,7 +107,7 @@ Work is incremental. Each phase must compile, test, and document before the next
 | Protocol | Phase | Status |
 |----------|-------|--------|
 | SSH + SOCKS5 | 2 | Implemented |
-| Smart Config exit zones | — | Read-only zone preview implemented; selected-country tunnel blocked on native encrypted Smart Config response/flowgraph |
+| Smart Config exit zones | Implemented for password SSH | Zone selection, direct TCP and observed DarkTunnel shim; live proxy results in docs/ZONES.md |
 | SSH + TUN TCP | 3 | Implemented |
 | UDPGW | 5 | Implemented (SSH-only) |
 | Shadowsocks AEAD TCP | 6 | Implemented (`aes-128-gcm` / `aes-256-gcm`) |

@@ -53,11 +53,11 @@ easy add-ss --name ss --host YOUR_HOST --port 8388 --method aes-256-gcm --passwo
 easy add-vless --name vless --host YOUR_HOST --port 443 --uuid YOUR-UUID --transport tls
 ```
 
-RocketTunnel Smart Config links can be used to preview their real exit-country
-list in the desktop Import menu or with `easy preview-smart-zones`. Country
-selection and connection through an imported Smart Config are **not yet
-implemented**; a manually entered SSH Direct profile cannot fetch or force
-those zones. See `docs/ZONES.md`. Keep private links out of the repository.
+Import a RocketTunnel Smart Config link from the dashboard, open **Change zone**
+on its profile, select an exit and press **Connect**. The selection applies on
+the next connection. Choose **Auto / Best** for provider-managed routing.
+Easy handles password-authenticated `ssh_direct` and the observed
+`ssh_darktunnel` configuration. Keep private import links out of the repository.
 
 Data lives in `~/.config/easy/`. See `docs/INSTALL.md` and `docs/TROUBLESHOOTING.md`.
 

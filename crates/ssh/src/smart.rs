@@ -38,12 +38,13 @@ struct RawEndpoint {
     username: String,
     auth_method: String,
     auth: String,
+    #[serde(default)]
     params: RawParams,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct RawParams {
-    shim: RawShim,
+    shim: Option<RawShim>,
 }
 
 #[derive(Deserialize)]
@@ -80,16 +81,12 @@ impl Drop for RawEndpoint {
         self.hostname.zeroize();
         self.username.zeroize();
         self.auth.zeroize();
-        self.params.shim.tokens.host_port.zeroize();
-        self.params.shim.tokens.ua.zeroize();
-        for state in self
-            .params
-            .shim
-            .states
-            .tx
-            .iter_mut()
-            .chain(self.params.shim.states.rx.iter_mut())
-        {
+        let Some(shim) = &mut self.params.shim else {
+            return;
+        };
+        shim.tokens.host_port.zeroize();
+        shim.tokens.ua.zeroize();
+        for state in shim.states.tx.iter_mut().chain(shim.states.rx.iter_mut()) {
             state.data.zeroize();
         }
     }
@@ -138,16 +135,29 @@ fn parse_endpoint(plain: &[u8], smart: &RocketSmartConfig) -> Result<SmartEndpoi
     let items = patches
         .as_array_mut()
         .ok_or_else(|| smart_error("expected JSON patch array"))?;
+    let kinds: Vec<_> = items
+        .iter()
+        .filter_map(|item| item.pointer("/value/type").and_then(Value::as_str))
+        .map(|kind| match kind {
+            "ssh_direct" | "ssh_tls" | "ssh_ws" | "ssh_wss" | "ssh_httpupgrade"
+            | "ssh_darktunnel" | "vless" => kind,
+            _ => "other",
+        })
+        .collect();
+    let unsupported = format!("unsupported tunnel types: {}", kinds.join(", "));
     let endpoint_value = items
         .iter_mut()
         .rev()
         .find(|item| {
             item.get("op").and_then(Value::as_str) == Some("merge")
-                && item.pointer("/value/type").and_then(Value::as_str) == Some("ssh_darktunnel")
+                && matches!(
+                    item.pointer("/value/type").and_then(Value::as_str),
+                    Some("ssh_direct" | "ssh_darktunnel")
+                )
         })
         .and_then(|item| item.get_mut("value"))
         .map(Value::take)
-        .ok_or_else(|| smart_error("no supported SSH tunnel in response"))?;
+        .ok_or_else(|| smart_error(&unsupported))?;
     let mut raw: RawEndpoint = serde_json::from_value(endpoint_value)
         .map_err(|_| smart_error("invalid SSH tunnel parameters"))?;
     // The observed Smart Config patch carries these exact literal markers.
@@ -159,8 +169,7 @@ fn parse_endpoint(plain: &[u8], smart: &RocketSmartConfig) -> Result<SmartEndpoi
     if raw.auth == "<<password>>" {
         raw.auth = smart.password.clone();
     }
-    if raw.kind != "ssh_darktunnel"
-        || raw.auth_method != "password"
+    if raw.auth_method != "password"
         || raw.hostname.is_empty()
         || raw.hostname.len() > 253
         || raw
@@ -172,38 +181,46 @@ fn parse_endpoint(plain: &[u8], smart: &RocketSmartConfig) -> Result<SmartEndpoi
         || raw.username.len() > 255
         || raw.auth.is_empty()
         || raw.auth.len() > 4096
-        || !raw.params.shim.enabled
     {
         return Err(smart_error("unsupported SSH tunnel parameters"));
     }
-    let tx = raw
-        .params
-        .shim
-        .states
-        .tx
-        .first()
-        .filter(|state| state.action == "payload")
-        .ok_or_else(|| smart_error("unsupported shim transmit state"))?;
-    let rx = raw
-        .params
-        .shim
-        .states
-        .rx
-        .first()
-        .filter(|state| state.action == "match_until" && state.flags.iter().any(|f| f == "skip"))
-        .ok_or_else(|| smart_error("unsupported shim receive state"))?;
-    let payload = Zeroizing::new(render_tokens(&tx.data, &raw.params.shim.tokens)?);
-    let marker = render_tokens(&rx.data, &raw.params.shim.tokens)?;
-    if marker.is_empty() || marker.len() > 128 || !marker.starts_with(b"SSH-") {
-        return Err(smart_error("unsupported SSH shim marker"));
-    }
-    let max_response = rx
-        .max_len
-        .unwrap_or(MAX_SHIM_RESPONSE)
-        .min(MAX_SHIM_RESPONSE);
-    if max_response < marker.len() {
-        return Err(smart_error("invalid shim response limit"));
-    }
+    let (payload, marker, max_response) = if raw.kind == "ssh_direct" {
+        (Zeroizing::new(Vec::new()), Vec::new(), 0)
+    } else {
+        let shim = raw
+            .params
+            .shim
+            .as_ref()
+            .filter(|s| s.enabled)
+            .ok_or_else(|| smart_error("missing enabled shim"))?;
+        let tx = shim
+            .states
+            .tx
+            .first()
+            .filter(|state| state.action == "payload")
+            .ok_or_else(|| smart_error("unsupported shim transmit state"))?;
+        let rx = shim
+            .states
+            .rx
+            .first()
+            .filter(|state| {
+                state.action == "match_until" && state.flags.iter().any(|f| f == "skip")
+            })
+            .ok_or_else(|| smart_error("unsupported shim receive state"))?;
+        let payload = Zeroizing::new(render_tokens(&tx.data, &shim.tokens)?);
+        let marker = render_tokens(&rx.data, &shim.tokens)?;
+        if marker.is_empty() || marker.len() > 128 || !marker.starts_with(b"SSH-") {
+            return Err(smart_error("unsupported SSH shim marker"));
+        }
+        let max_response = rx
+            .max_len
+            .unwrap_or(MAX_SHIM_RESPONSE)
+            .min(MAX_SHIM_RESPONSE);
+        if max_response < marker.len() {
+            return Err(smart_error("invalid shim response limit"));
+        }
+        (payload, marker, max_response)
+    };
     Ok(SmartEndpoint {
         host: std::mem::take(&mut raw.hostname),
         port: raw.port,
@@ -324,7 +341,18 @@ pub async fn connect_smart_profile(
     let smart = rt_config::decode_rocket_smart_link(link)
         .map_err(|_| smart_error("saved import link is invalid"))?;
     let endpoint = fetch_endpoint(&smart, profile.selected_zone.as_deref()).await?;
-    let stream = open_shim(&endpoint).await?;
+    let stream = if endpoint.marker.is_empty() {
+        rt_tls::dial(&rt_tls::DialRequest::from_profile(
+            &endpoint.host,
+            endpoint.port,
+            rt_config::Transport::Direct,
+            Default::default(),
+        ))
+        .await
+        .map_err(|_| smart_error("could not reach selected SSH endpoint"))?
+    } else {
+        open_shim(&endpoint).await?
+    };
     let (keepalive_secs, connect_timeout_secs, host_key_policy) = match &profile.settings {
         ProtocolSettings::Ssh {
             keepalive_secs,
@@ -425,6 +453,21 @@ mod tests {
             endpoint.payload.as_slice(),
             b"GET example.invalid:80 HTTP/1.1\r\nUser-Agent: test-agent\r\n\r\n"
         );
+    }
+
+    #[test]
+    fn direct_zone_needs_no_shim() {
+        let link = RocketSmartConfig {
+            username: "demo".into(),
+            password: "test-only".into(),
+            path: "/".into(),
+            hosts: vec![],
+        };
+        let patch = br#"[{"op":"merge","value":{"type":"ssh_direct","hostname":"example.invalid","port":22,"auth_method":"password","username":"<<username>>","auth":"<<password>>"}}]"#;
+        let endpoint = parse_endpoint(patch, &link).unwrap();
+        assert!(endpoint.marker.is_empty());
+        assert_eq!(endpoint.username, "demo");
+        assert_eq!(endpoint.password.as_str(), "test-only");
     }
 
     #[test]
